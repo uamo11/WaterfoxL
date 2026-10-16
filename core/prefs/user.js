@@ -15,6 +15,9 @@ user_pref("gfx.direct2d.disabled", true);
 user_pref("dom.webgpu.enabled", false);
 user_pref("webgl.disabled", false);
 user_pref("webgl.force-enabled", false);
+user_pref("webgl.msaa-force", false);
+user_pref("webgl.max-contexts-per-principal", 8);
+user_pref("javascript.options.wasm_simd", true);
 user_pref("layout.css.backdrop-filter.enabled", true);
 user_pref("widget.windows.window_occlusion_tracking.enabled", false);
 

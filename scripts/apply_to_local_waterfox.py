@@ -6,23 +6,23 @@ USER_JS = os.path.join(BASE_DIR, "core", "prefs", "user.js")
 CHROME_DIR = os.path.join(BASE_DIR, "core", "chrome")
 PAGES_DIR = os.path.join(BASE_DIR, "core", "pages")
 
+MODULES_DIR = os.path.join(BASE_DIR, "core", "modules")
+
 TARGET_DIRS = [
-    # Custom Kizzy profiles
-    r"C:\Users\Usuario\Documents\SCRIPT\KizzyBrowser Script\Waterfoc Browser\Waterfox_Profiles",
-    # Standard Waterfox AppData profiles
+    # Perfiles estándar de Waterfox en AppData
     os.path.expandvars(r"%APPDATA%\Waterfox\Profiles"),
-    # Local Waterfox Lite Portable
+    # Perfil local de Waterfox Lite Portable
     os.path.join(BASE_DIR, "WaterfoxLite_Portable", "profile")
 ]
 
 def apply_to_profile(profile_path):
-    print(f"\n[+] Aplicando optimizaciones a perfil: {profile_path}")
+    print(f"\n[+] Aplicando optimizaciones Waterfox Lite a perfil: {profile_path}")
     os.makedirs(profile_path, exist_ok=True)
     
     # 1. Copiar user.js
     dest_user_js = os.path.join(profile_path, "user.js")
     shutil.copy2(USER_JS, dest_user_js)
-    print("    -> user.js copiado (pantalla en negro resuelta, lag YTM resuelto, nueva pestana REA)")
+    print("    -> user.js copiado (pantalla en negro resuelta, lag YTM resuelto, WebGL booster activo)")
 
     # 2. Copiar carpeta chrome (userChrome.css y userContent.css)
     dest_chrome = os.path.join(profile_path, "chrome")
@@ -38,7 +38,17 @@ def apply_to_profile(profile_path):
     src_newtab = os.path.join(PAGES_DIR, "newtab.html")
     if os.path.exists(src_newtab):
         shutil.copy2(src_newtab, dest_newtab)
-        print("    -> newtab.html copiado (acceso directo a Apps REA al abrir ventana)")
+        print("    -> newtab.html copiado (acceso directo a Apps REA & Game Shield)")
+
+    # 4. Copiar carpeta modules (motores REA y Web Game Shield)
+    dest_modules = os.path.join(profile_path, "modules")
+    os.makedirs(dest_modules, exist_ok=True)
+    if os.path.exists(MODULES_DIR):
+        for f in os.listdir(MODULES_DIR):
+            src_f = os.path.join(MODULES_DIR, f)
+            dest_f = os.path.join(dest_modules, f)
+            shutil.copy2(src_f, dest_f)
+        print("    -> modules/ (xapp, ytm, webgame-shield) copiados exitosamente")
 
 def main():
     print("=" * 65)

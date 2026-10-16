@@ -59,7 +59,7 @@ Ejecuta en consola:
 ```powershell
 python scripts/apply_to_local_waterfox.py
 ```
-El script detectará automáticamente tus perfiles existentes (incluyendo perfiles de KizzyBrowser) y aplicará las configuraciones `user.js` y `chrome/` al instante.
+El script detectará automáticamente tus perfiles existentes de Waterfox y aplicará las configuraciones `user.js`, estilos `chrome/`, la página de inicio `newtab.html` y los módulos de optimización al instante.
 
 ### Opción 2: Compilación y Descarga con GitHub Actions
 Este repositorio cuenta con un flujo automatizado en `.github/workflows/build.yml` que:

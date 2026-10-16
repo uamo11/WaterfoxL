@@ -155,6 +155,52 @@
     .icon-fb { background: #1877f2; color: #fff; }
     .icon-gemini { background: linear-gradient(135deg, #1ba1e2, #9b51e0); color: #fff; }
     
+    .shield-banner {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 18px;
+      margin: 0 auto 24px auto;
+      max-width: 580px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      text-align: left;
+    }
+    .shield-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .shield-icon {
+      font-size: 22px;
+    }
+    .shield-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .shield-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .shield-btn {
+      background: var(--card-hover);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .shield-btn:hover {
+      background: #30363d;
+      border-color: var(--accent);
+    }
+    
     footer {
       font-size: 12px;
       color: var(--text-muted);
@@ -188,6 +234,18 @@
         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
       </svg>
       <input type="text" class="search-input" id="search" placeholder="Buscar en la web o presiona 1-5 para abrir apps..." autofocus autocomplete="off">
+    </div>
+
+    <!-- Web Game Shield & Performance Booster Banner -->
+    <div class="shield-banner">
+      <div class="shield-info">
+        <span class="shield-icon" id="shieldIcon">🚀</span>
+        <div>
+          <div class="shield-title" id="shieldTitle">Game Booster Activo</div>
+          <div class="shield-desc" id="shieldDesc">Resolución WebGL optimizada (0.8x), 60 FPS cap y 2 cores para Pentium G620</div>
+        </div>
+      </div>
+      <button class="shield-btn" id="shieldBtn" onclick="toggleShield()">Bloquear Juegos</button>
     </div>
 
     <!-- Apps Grid -->
@@ -294,6 +352,37 @@
         window.location.href = keyMap[e.key];
       }
     });
+
+    // Control del Escudo / Game Booster
+    function syncShieldStatus() {
+      const isBlocked = localStorage.getItem('wfl_block_games') === 'true';
+      const icon = document.getElementById('shieldIcon');
+      const title = document.getElementById('shieldTitle');
+      const desc = document.getElementById('shieldDesc');
+      const btn = document.getElementById('shieldBtn');
+
+      if (isBlocked) {
+        icon.textContent = '🛡️';
+        title.textContent = 'Game Shield Activo (Bloqueo Total)';
+        title.style.color = '#f85149';
+        desc.textContent = 'Portales de juegos web bloqueados para 0% uso de CPU y RAM';
+        btn.textContent = 'Activar Game Booster';
+      } else {
+        icon.textContent = '🚀';
+        title.textContent = 'Game Booster Activo (Aceleración WebGL)';
+        title.style.color = '#3fb950';
+        desc.textContent = 'Resolución escalada (0.8x), MSAA off, 60 FPS cap y 2 cores para Pentium G620';
+        btn.textContent = 'Bloquear Juegos Web';
+      }
+    }
+
+    function toggleShield() {
+      const isBlocked = localStorage.getItem('wfl_block_games') === 'true';
+      localStorage.setItem('wfl_block_games', isBlocked ? 'false' : 'true');
+      syncShieldStatus();
+    }
+
+    syncShieldStatus();
   </script>
 </body>
 </html>

@@ -5,6 +5,8 @@ __pycache__/
 
 # Waterfox build & temporary artifacts
 WaterfoxLite_Dist/
+WaterfoxLite_Portable/
+Waterfox-Lite-x64-Legacy/
 *.zip
 *.sha256
 *.exe

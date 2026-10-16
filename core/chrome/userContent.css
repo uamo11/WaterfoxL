@@ -97,3 +97,11 @@
     box-shadow: none !important;
   }
 }
+
+/* 6. Web Game Portals Optimization (Poki, CrazyGames, Krunker, etc.) */
+@-moz-document domain("poki.com"), domain("crazygames.com"), domain("krunker.io"), domain("friv.com"), domain("1v1.lol"), domain("minijuegos.com"), domain("y8.com"), domain("armorgames.com"), domain("kongregate.com") {
+  canvas {
+    image-rendering: -moz-crisp-edges !important;
+    image-rendering: pixelated !important;
+  }
+}
