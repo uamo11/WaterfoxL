@@ -347,35 +347,64 @@ static void FreeIconCache() {
 // ----------------------------------------------------------------------------
 // Codificación de Búsqueda URL (Google Search)
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Codificación de Búsqueda URL (Google Search con UTF-8 Percent-Encoding RFC 3986)
+// ----------------------------------------------------------------------------
 static void UrlEncodeSearchQuery(const wchar_t *query, wchar_t *outEncoded, size_t maxLen) {
     if (!query || !outEncoded || maxLen == 0) return;
+
+    // Convertir de UTF-16 a UTF-8 para codificar caracteres especiales (ñ, tildes, símbolos)
+    char utf8Buf[2048];
+    int utf8Len = WideCharToMultiByte(CP_UTF8, 0, query, -1, utf8Buf, sizeof(utf8Buf) - 1, NULL, NULL);
+    if (utf8Len <= 0) {
+        wcsncpy(outEncoded, query, maxLen);
+        outEncoded[maxLen - 1] = L'\0';
+        return;
+    }
+
     size_t j = 0;
-    for (size_t i = 0; query[i] != L'\0' && j + 4 < maxLen; i++) {
-        wchar_t ch = query[i];
-        if (ch == L' ') {
+    const wchar_t hexDigits[] = L"0123456789ABCDEF";
+    for (int i = 0; utf8Buf[i] != '\0' && j + 4 < maxLen; i++) {
+        unsigned char b = (unsigned char)utf8Buf[i];
+        if (b == ' ') {
             outEncoded[j++] = L'+';
-        } else if (ch == L'&') {
-            outEncoded[j++] = L'%'; outEncoded[j++] = L'2'; outEncoded[j++] = L'6';
-        } else if (ch == L'#') {
-            outEncoded[j++] = L'%'; outEncoded[j++] = L'2'; outEncoded[j++] = L'3';
-        } else if (ch == L'?') {
-            outEncoded[j++] = L'%'; outEncoded[j++] = L'3'; outEncoded[j++] = L'F';
-        } else if (ch == L'=') {
-            outEncoded[j++] = L'%'; outEncoded[j++] = L'3'; outEncoded[j++] = L'D';
-        } else if (ch == L'%') {
-            outEncoded[j++] = L'%'; outEncoded[j++] = L'2'; outEncoded[j++] = L'5';
-        } else if (ch == L'+') {
-            outEncoded[j++] = L'%'; outEncoded[j++] = L'2'; outEncoded[j++] = L'B';
+        } else if ((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+                   (b >= '0' && b <= '9') || b == '-' || b == '_' || b == '.' || b == '~') {
+            outEncoded[j++] = (wchar_t)b;
         } else {
-            outEncoded[j++] = ch;
+            outEncoded[j++] = L'%';
+            outEncoded[j++] = hexDigits[(b >> 4) & 0x0F];
+            outEncoded[j++] = hexDigits[b & 0x0F];
         }
     }
     outEncoded[j] = L'\0';
 }
 
 // ----------------------------------------------------------------------------
-// Limpieza de Procesos Huérfanos de Waterfox
+// Limpieza de Procesos Huérfanos de Waterfox (Sin Ventana Visible)
 // ----------------------------------------------------------------------------
+typedef struct {
+    DWORD pid;
+    BOOL hasVisible;
+} ProcWinInfo;
+
+static BOOL CALLBACK CheckProcWinProc(HWND hwnd, LPARAM lParam) {
+    ProcWinInfo *pInfo = (ProcWinInfo *)lParam;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == pInfo->pid && IsWindowVisible(hwnd)) {
+        pInfo->hasVisible = TRUE;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL HasVisibleWindow(DWORD pid) {
+    ProcWinInfo info = { pid, FALSE };
+    EnumWindows(CheckProcWinProc, (LPARAM)&info);
+    return info.hasVisible;
+}
+
 static void TerminateOrphanedGeckoProcesses() {
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnap != INVALID_HANDLE_VALUE) {
@@ -384,16 +413,58 @@ static void TerminateOrphanedGeckoProcesses() {
         if (Process32FirstW(hSnap, &pe)) {
             do {
                 if (_wcsicmp(pe.szExeFile, L"waterfox.exe") == 0) {
-                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
-                    if (hProc) {
-                        TerminateProcess(hProc, 0);
-                        CloseHandle(hProc);
+                    // Sólo terminar procesos huérfanos que no posean ventanas visibles
+                    if (!HasVisibleWindow(pe.th32ProcessID)) {
+                        HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+                        if (hProc) {
+                            TerminateProcess(hProc, 0);
+                            CloseHandle(hProc);
+                        }
                     }
                 }
             } while (Process32NextW(hSnap, &pe));
         }
         CloseHandle(hSnap);
     }
+}
+
+// ----------------------------------------------------------------------------
+// Localizador de Perfil del Usuario (Mantiene inicio de sesión y uBlock)
+// ----------------------------------------------------------------------------
+static BOOL FindUserProfile(wchar_t *outProf, DWORD maxProf) {
+    wchar_t appData[MAX_PATH];
+    if (GetEnvironmentVariableW(L"APPDATA", appData, MAX_PATH) > 0) {
+        // 1. Probar perfil principal activo detectado con sesiones de YT Music y uBlock
+        wchar_t candidate[MAX_PATH];
+        swprintf(candidate, MAX_PATH, L"%ls\\Waterfox\\Profiles\\3dlgxf5y.default-release-1", appData);
+        if (GetFileAttributesW(candidate) != INVALID_FILE_ATTRIBUTES) {
+            GetFullPathNameW(candidate, maxProf, outProf, NULL);
+            return TRUE;
+        }
+
+        // 2. Buscar en APPDATA\Waterfox\Profiles cualquier perfil con cookies y extensiones
+        wchar_t searchPattern[MAX_PATH];
+        swprintf(searchPattern, MAX_PATH, L"%ls\\Waterfox\\Profiles\\*", appData);
+        WIN32_FIND_DATAW fd;
+        HANDLE hFind = FindFirstFileW(searchPattern, &fd);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+                    wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
+                    wchar_t checkPath[MAX_PATH];
+                    swprintf(checkPath, MAX_PATH, L"%ls\\Waterfox\\Profiles\\%ls\\cookies.sqlite", appData, fd.cFileName);
+                    if (GetFileAttributesW(checkPath) != INVALID_FILE_ATTRIBUTES) {
+                        swprintf(candidate, MAX_PATH, L"%ls\\Waterfox\\Profiles\\%ls", appData, fd.cFileName);
+                        GetFullPathNameW(candidate, maxProf, outProf, NULL);
+                        FindClose(hFind);
+                        return TRUE;
+                    }
+                }
+            } while (FindNextFileW(hFind, &fd));
+            FindClose(hFind);
+        }
+    }
+    return FALSE;
 }
 
 // ----------------------------------------------------------------------------
@@ -411,26 +482,26 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
         L"%ls\\..\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
         L"%ls\\app\\waterfox.exe",
         L"%ls\\core\\waterfox.exe",
-        L"%ls\\waterfox.exe"
+        L"%ls\\waterfox.exe",
+        L"C:\\Program Files\\Win94\\waterfox.exe"
     };
 
-    const wchar_t *candidatesProf[] = {
-        L"%ls\\profile",
-        L"%ls\\WaterfoxLite_Portable\\profile",
-        L"%ls\\..\\WaterfoxLite_Portable\\profile",
-        L"%ls\\profile",
-        L"%ls\\profile",
-        L"%ls\\profile"
-    };
+    // Primero intentar obtener el perfil real de Waterfox con las sesiones del usuario y uBlock
+    BOOL hasUserProfile = FindUserProfile(outProf, maxProf);
 
     for (size_t i = 0; i < sizeof(candidatesBin) / sizeof(candidatesBin[0]); i++) {
         wchar_t testBin[MAX_PATH];
         swprintf(testBin, MAX_PATH, candidatesBin[i], exePath);
         if (GetFileAttributes(testBin) != INVALID_FILE_ATTRIBUTES) {
-            wchar_t testProf[MAX_PATH];
-            swprintf(testProf, MAX_PATH, candidatesProf[i], exePath);
             GetFullPathNameW(testBin, maxBin, outBin, NULL);
-            GetFullPathNameW(testProf, maxProf, outProf, NULL);
+            if (!hasUserProfile) {
+                wchar_t testProf[MAX_PATH];
+                swprintf(testProf, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\profile", exePath);
+                if (GetFileAttributes(testProf) == INVALID_FILE_ATTRIBUTES) {
+                    swprintf(testProf, MAX_PATH, L"%ls\\profile", exePath);
+                }
+                GetFullPathNameW(testProf, maxProf, outProf, NULL);
+            }
             return TRUE;
         }
     }
@@ -440,10 +511,12 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
     wchar_t curBin[MAX_PATH];
     swprintf(curBin, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\app\\core\\waterfox.exe", curDir);
     if (GetFileAttributes(curBin) != INVALID_FILE_ATTRIBUTES) {
-        wchar_t curProf[MAX_PATH];
-        swprintf(curProf, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\profile", curDir);
         GetFullPathNameW(curBin, maxBin, outBin, NULL);
-        GetFullPathNameW(curProf, maxProf, outProf, NULL);
+        if (!hasUserProfile) {
+            wchar_t curProf[MAX_PATH];
+            swprintf(curProf, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\profile", curDir);
+            GetFullPathNameW(curProf, maxProf, outProf, NULL);
+        }
         return TRUE;
     }
 
@@ -522,7 +595,7 @@ static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
     RECT rc;
     GetClientRect(hwndParent, &rc);
     int topY = g_showBookmarksBar ? 114 : 84;
-    int childH = rc.bottom - topY - 34;
+    int childH = rc.bottom - topY;
     if (childH < 0) childH = 0;
 
     SetWindowPos(hwndGecko, NULL, 0, topY, rc.right, childH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
@@ -586,7 +659,7 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
             RECT rc;
             GetClientRect(hwnd, &rc);
             int topY = g_showBookmarksBar ? 114 : 84;
-            int childH = rc.bottom - topY - 34;
+            int childH = rc.bottom - topY;
             if (childH < 0) childH = 0;
             SetWindowPos(g_hGeckoWnd, NULL, 0, topY, rc.right, childH, SWP_NOZORDER | SWP_SHOWWINDOW);
             ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
@@ -812,8 +885,8 @@ static void RenderUI(HWND hwnd, HDC hdc) {
 
     int tabX = 8;
     int tabW = 200;
-    if (tabW * g_tabCount > width - 100) {
-        tabW = (width - 100) / g_tabCount;
+    if (tabW * g_tabCount > width - 180) {
+        tabW = (width - 180) / g_tabCount;
     }
 
     for (int i = 0; i < g_tabCount; i++) {
@@ -863,6 +936,51 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     SetTextColor(memDC, COLOR_TEXT);
     SelectObject(memDC, g_hFontBold);
     DrawText(memDC, L"+", -1, &g_rcNewTab, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    // Botones de Control de Ventana en la Barra Superior Derecha (Min, Max, Cerrar)
+    int btnW = 38;
+    int btnH = 28;
+    int btnY = 6;
+
+    // Cerrar (✕)
+    g_rcWinClose.right  = width - 8;
+    g_rcWinClose.left   = g_rcWinClose.right - btnW;
+    g_rcWinClose.top    = btnY;
+    g_rcWinClose.bottom = btnY + btnH;
+
+    // Maximizar / Restaurar (▢ o ⧉)
+    g_rcWinMax.right   = g_rcWinClose.left - 4;
+    g_rcWinMax.left    = g_rcWinMax.right - btnW;
+    g_rcWinMax.top     = btnY;
+    g_rcWinMax.bottom  = btnY + btnH;
+
+    // Minimizar (–)
+    g_rcWinMin.right   = g_rcWinMax.left - 4;
+    g_rcWinMin.left    = g_rcWinMin.right - btnW;
+    g_rcWinMin.top     = btnY;
+    g_rcWinMin.bottom  = btnY + btnH;
+
+    // 1. Minimizar
+    COLORREF minBg = (g_hoveredWinBtn == 1) ? COLOR_CARD_HOVER : RGB(25, 30, 38);
+    DrawDarkRect(memDC, &g_rcWinMin, minBg, COLOR_BORDER, 4);
+    SelectObject(memDC, g_hFontBold);
+    SetTextColor(memDC, COLOR_TEXT);
+    DrawText(memDC, L"–", -1, &g_rcWinMin, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    // 2. Maximizar / Restaurar
+    COLORREF maxBg = (g_hoveredWinBtn == 2) ? COLOR_CARD_HOVER : RGB(25, 30, 38);
+    DrawDarkRect(memDC, &g_rcWinMax, maxBg, COLOR_BORDER, 4);
+    SelectObject(memDC, g_hFontNormal);
+    SetTextColor(memDC, COLOR_TEXT);
+    DrawText(memDC, (hwnd && IsZoomed(hwnd)) ? L"⧉" : L"▢", -1, &g_rcWinMax, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    // 3. Cerrar (Al pasar el cursor cambia a rojo vibrante)
+    COLORREF closeBg = (g_hoveredWinBtn == 3) ? RGB(232, 17, 35) : RGB(25, 30, 38);
+    COLORREF closeBorder = (g_hoveredWinBtn == 3) ? RGB(248, 81, 73) : COLOR_BORDER;
+    DrawDarkRect(memDC, &g_rcWinClose, closeBg, closeBorder, 4);
+    SelectObject(memDC, g_hFontNormal);
+    SetTextColor(memDC, COLOR_TEXT);
+    DrawText(memDC, L"✕", -1, &g_rcWinClose, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
     // ------------------------------------------------------------------------
     // 2. Barra de Navegación y Herramientas (Navigation Toolbar)
@@ -1068,77 +1186,6 @@ static void RenderUI(HWND hwnd, HDC hdc) {
             DrawText(memDC, g_apps[i].desc, -1, &descRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 6. Barra de Estado Inferior con Consumo Real de RAM y Botones de Ventana
-    // ------------------------------------------------------------------------
-    double ramMB = GetProcessRAM_MB();
-    RECT footerRect = { 0, height - 34, width, height };
-    HBRUSH hFooterBrush = CreateSolidBrush(COLOR_TAB_STRIP);
-    FillRect(memDC, &footerRect, hFooterBrush);
-    DeleteObject(hFooterBrush);
-
-    RECT footerBorder = { 0, height - 34, width, height - 33 };
-    HBRUSH hBorderBrush = CreateSolidBrush(COLOR_BORDER);
-    FillRect(memDC, &footerBorder, hBorderBrush);
-    DeleteObject(hBorderBrush);
-
-    SelectObject(memDC, g_hFontSmall);
-    SetTextColor(memDC, COLOR_GREEN);
-
-    wchar_t ramText[256];
-    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
-        swprintf(ramText, 256, L"● Waterfox Lite: UI C Nativa (%.2f MB) + Gecko Engine Acoplado (H.264 por GPU)  |  Atajos: Teclas 1-7", ramMB);
-    } else {
-        swprintf(ramText, 256, L"● RAM en Home: %.2f MB  |  CPU: 0.0%%  |  UI 100%% en C Nativo  |  24 Juegos Web en Carpeta  |  Atajos: Teclas 1-7", ramMB);
-    }
-    RECT ramRect = { 12, height - 34, width - 110, height };
-    DrawText(memDC, ramText, -1, &ramRect, DT_SINGLELINE | DT_LEFT | DT_VCENTER);
-
-    // Botones de Control de Ventana en la Barra Inferior (Minimizar, Maximizar, Cerrar)
-    int btnW = 28;
-    int btnH = 22;
-    int btnY = height - 28;
-
-    // Cerrar (✕)
-    g_rcWinClose.right  = width - 8;
-    g_rcWinClose.left   = g_rcWinClose.right - btnW;
-    g_rcWinClose.top    = btnY;
-    g_rcWinClose.bottom = btnY + btnH;
-
-    // Maximizar / Restaurar (▢ o ⧉)
-    g_rcWinMax.right   = g_rcWinClose.left - 4;
-    g_rcWinMax.left    = g_rcWinMax.right - btnW;
-    g_rcWinMax.top     = btnY;
-    g_rcWinMax.bottom  = btnY + btnH;
-
-    // Minimizar (–)
-    g_rcWinMin.right   = g_rcWinMax.left - 4;
-    g_rcWinMin.left    = g_rcWinMin.right - btnW;
-    g_rcWinMin.top     = btnY;
-    g_rcWinMin.bottom  = btnY + btnH;
-
-    // 1. Minimizar
-    COLORREF minBg = (g_hoveredWinBtn == 1) ? COLOR_CARD_HOVER : RGB(25, 30, 38);
-    DrawDarkRect(memDC, &g_rcWinMin, minBg, COLOR_BORDER, 4);
-    SelectObject(memDC, g_hFontBold);
-    SetTextColor(memDC, COLOR_TEXT);
-    DrawText(memDC, L"–", -1, &g_rcWinMin, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-
-    // 2. Maximizar / Restaurar
-    COLORREF maxBg = (g_hoveredWinBtn == 2) ? COLOR_CARD_HOVER : RGB(25, 30, 38);
-    DrawDarkRect(memDC, &g_rcWinMax, maxBg, COLOR_BORDER, 4);
-    SelectObject(memDC, g_hFontNormal);
-    SetTextColor(memDC, COLOR_TEXT);
-    DrawText(memDC, (hwnd && IsZoomed(hwnd)) ? L"⧉" : L"▢", -1, &g_rcWinMax, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-
-    // 3. Cerrar (Al pasar el cursor cambia a rojo vibrante)
-    COLORREF closeBg = (g_hoveredWinBtn == 3) ? RGB(232, 17, 35) : RGB(25, 30, 38);
-    COLORREF closeBorder = (g_hoveredWinBtn == 3) ? RGB(248, 81, 73) : COLOR_BORDER;
-    DrawDarkRect(memDC, &g_rcWinClose, closeBg, closeBorder, 4);
-    SelectObject(memDC, g_hFontNormal);
-    SetTextColor(memDC, COLOR_TEXT);
-    DrawText(memDC, L"✕", -1, &g_rcWinClose, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
     // Borde exterior oscuro elegante de 1 píxel
     HPEN hBorderPen = CreatePen(PS_SOLID, 1, COLOR_BORDER);
@@ -1385,6 +1432,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (PtInRect(&g_rcNewTab, clientPt)) {
                 onInteractive = TRUE;
             }
+            if (PtInRect(&g_rcWinMin, clientPt) || PtInRect(&g_rcWinMax, clientPt) || PtInRect(&g_rcWinClose, clientPt)) {
+                onInteractive = TRUE;
+            }
             if (!onInteractive) {
                 return HTCAPTION;
             }
@@ -1401,7 +1451,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
             int topY = g_showBookmarksBar ? 114 : 84;
-            int childH = height - topY - 34;
+            int childH = height - topY;
             if (childH < 0) childH = 0;
             SetWindowPos(g_hGeckoWnd, NULL, 0, topY, width, childH, SWP_NOZORDER);
         }
@@ -1417,11 +1467,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 s_trimCount = 0;
                 EmptyWorkingSet(GetCurrentProcess());
             }
-
-            RECT clientRect;
-            GetClientRect(hwnd, &clientRect);
-            RECT footer = { 0, clientRect.bottom - 34, clientRect.right, clientRect.bottom };
-            InvalidateRect(hwnd, &footer, FALSE);
             return 0;
         }
 
@@ -1489,7 +1534,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         else if (PtInRect(&g_rcStar, (POINT){ x, y })) g_hoveredBtn = 7;
         else if (PtInRect(&g_rcNewTab, (POINT){ x, y })) g_hoveredBtn = 8;
 
-        // Botones de Ventana en la Barra Inferior
+        // Botones de Ventana en la Barra Superior
         if (PtInRect(&g_rcWinMin, (POINT){ x, y })) g_hoveredWinBtn = 1;
         else if (PtInRect(&g_rcWinMax, (POINT){ x, y })) g_hoveredWinBtn = 2;
         else if (PtInRect(&g_rcWinClose, (POINT){ x, y })) g_hoveredWinBtn = 3;
@@ -1499,9 +1544,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 RECT clientRect;
                 GetClientRect(hwnd, &clientRect);
                 RECT rcTop = { 0, 0, clientRect.right, g_showBookmarksBar ? 114 : 84 };
-                RECT rcBottom = { 0, clientRect.bottom - 34, clientRect.right, clientRect.bottom };
                 InvalidateRect(hwnd, &rcTop, FALSE);
-                InvalidateRect(hwnd, &rcBottom, FALSE);
             } else {
                 InvalidateRect(hwnd, NULL, FALSE);
             }
@@ -1525,9 +1568,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             RECT clientRect;
             GetClientRect(hwnd, &clientRect);
             RECT rcTop = { 0, 0, clientRect.right, g_showBookmarksBar ? 114 : 84 };
-            RECT rcBottom = { 0, clientRect.bottom - 34, clientRect.right, clientRect.bottom };
             InvalidateRect(hwnd, &rcTop, FALSE);
-            InvalidateRect(hwnd, &rcBottom, FALSE);
         } else {
             InvalidateRect(hwnd, NULL, FALSE);
         }
@@ -1743,7 +1784,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 RECT rc;
                 GetClientRect(hwnd, &rc);
                 int topY = g_showBookmarksBar ? 114 : 84;
-                int childH = rc.bottom - topY - 34;
+                int childH = rc.bottom - topY;
                 if (childH < 0) childH = 0;
                 SetWindowPos(g_hGeckoWnd, NULL, 0, topY, rc.right, childH, SWP_NOZORDER);
             }
