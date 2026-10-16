@@ -10,6 +10,7 @@ Waterfox-Lite-x64-Legacy/
 *.zip
 *.sha256
 *.exe
+*.bmp
 waterfox_installer*
 portable_profile/
 
