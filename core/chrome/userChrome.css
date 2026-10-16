@@ -1,30 +1,38 @@
 /* ==========================================================================
    Waterfox Lite - userChrome.css
-   Ocultar chrome nativo de Gecko: La UI completa se gestiona en C Nativo (Win32)
+   Ocultar completamente los controles nativos de Gecko para que la
+   interfaz nativa en C sea la ÚNICA interfaz de usuario visible.
    ========================================================================== */
 
-#navigator-toolbox {
+/* 1. Ocultar la barra de herramientas de Gecko (pestañas, URL bar, marcadores) */
+#navigator-toolbox,
+#TabsToolbar,
+#nav-bar,
+#PersonalToolbar,
+#toolbar-menubar,
+#titlebar {
+  display: none !important;
   visibility: collapse !important;
-  height: 0px !important;
-  min-height: 0px !important;
-  max-height: 0px !important;
-  border: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
   margin: 0 !important;
   padding: 0 !important;
-}
-
-#titlebar {
-  visibility: collapse !important;
-  height: 0px !important;
-}
-
-#statuspanel,
-#statuspanel-label {
-  display: none !important;
-  opacity: 0 !important;
-}
-
-#main-window {
   border: none !important;
   box-shadow: none !important;
+}
+
+/* 2. Asegurar que el área de contenido web (#browser, #appcontent) use el 100% sin márgenes */
+#browser, 
+#appcontent, 
+.browserSidebarContainer,
+#main-window {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
+/* 3. Desactivar animaciones de carga innecesarias */
+*, *::before, *::after {
+  transition-duration: 0s !important;
 }

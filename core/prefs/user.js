@@ -4,24 +4,21 @@
 // ============================================================================
 
 // ----------------------------------------------------------------------------
-// 1. COMPOSICIÓN GRÁFICA Y WEBRENDER OPTIMIZADO PARA INTEL HD GRAPHICS
+// 1. SOLUCIÓN ESTABLE PARA X (TWITTER) Y COMPOSICIÓN GRÁFICA EN INTEL HD GRAPHICS
 // ----------------------------------------------------------------------------
-user_pref("gfx.webrender.all", true);
+user_pref("gfx.webrender.all", false);
 user_pref("gfx.webrender.software", false);
 user_pref("gfx.canvas.accelerated", true);
-user_pref("layers.gpu-process.enabled", true);
+user_pref("layers.acceleration.disabled", false);
 user_pref("gfx.direct2d.disabled", false);
-user_pref("dom.webgpu.enabled", false);
+user_pref("dom.webgpu.enabled", true);
 user_pref("webgl.disabled", false);
 user_pref("webgl.force-enabled", false);
 user_pref("webgl.msaa-force", false);
 user_pref("webgl.max-contexts-per-principal", 8);
-user_pref("webgl.out-of-process", false);
 user_pref("javascript.options.wasm_simd", true);
 user_pref("layout.css.backdrop-filter.enabled", true);
 user_pref("widget.windows.window_occlusion_tracking.enabled", false);
-user_pref("browser.sessionstore.resume_from_crash", false);
-user_pref("browser.sessionstore.max_resumed_crashes", 0);
 
 // ----------------------------------------------------------------------------
 // 2. SOLUCIÓN AL LAGG EN YOUTUBE MUSIC Y VIDEOS (FORZAR H.264 / EVITAR VP9/AV1)
@@ -42,6 +39,7 @@ user_pref("media.autoplay.default", 0);
 // ----------------------------------------------------------------------------
 // 3. AISLAMIENTO Y ESTABILIDAD DE PROCESOS GRÁFICOS (PREVENCIÓN DE CRASHES)
 // ----------------------------------------------------------------------------
+user_pref("webgl.out-of-process", true);
 user_pref("dom.ipc.processHangMonitor", true);
 user_pref("dom.ipc.processHangTimeoutSecs", 15);
 user_pref("dom.ipc.reportProcessHangs", false);
@@ -67,9 +65,7 @@ user_pref("network.http.max-persistent-connections-per-server", 6);
 user_pref("network.http.max-urgent-start-connections", 3);
 user_pref("network.ssl_tokens_cache_capacity", 2048);
 user_pref("network.dns.disableIPv6", true);
-user_pref("network.http.http3.enable", false);
-user_pref("dom.serviceWorkers.enabled", true);
-user_pref("dom.indexedDB.enabled", true);
+user_pref("network.http.http3.enable", true);
 
 // ----------------------------------------------------------------------------
 // 6. SCROLL CINEMÁTICO DE BAJO CONSUMO (SIN CARGA GPU)
@@ -126,28 +122,21 @@ user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
 // ----------------------------------------------------------------------------
 // 11. PÁGINA DE INICIO Y NUEVA VENTANA/PESTAÑA CON ACCESO DIRECTO A APPS REA
 // ----------------------------------------------------------------------------
-user_pref("browser.startup.homepage", "about:blank");
+user_pref("browser.startup.homepage", "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html");
 user_pref("browser.startup.page", 1);
-user_pref("browser.newtabpage.enabled", false);
-user_pref("browser.newtab.url", "about:blank");
+user_pref("browser.newtabpage.enabled", true);
+user_pref("browser.newtab.url", "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html");
 
 // ----------------------------------------------------------------------------
-// 12. SOPORTE DE MEMORIA COMPARTIDA (FIVEPLAY / GTA V WEB)
+// 12. SOPORTE WEBGPU & SHAREDARRAYBUFFER (FIVEPLAY / GTA V WEB)
 // ----------------------------------------------------------------------------
-user_pref("dom.webgpu.enabled", false);
-user_pref("dom.webgpu.workers.enabled", false);
-user_pref("gfx.webgpu.force-enabled", false);
+user_pref("dom.webgpu.enabled", true);
+user_pref("dom.webgpu.workers.enabled", true);
+user_pref("gfx.webgpu.force-enabled", true);
 user_pref("javascript.options.shared_memory", true);
 user_pref("dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled", true);
 user_pref("dom.min_timeout_value", 1);
 user_pref("privacy.reduceTimerPrecision", false);
-
-// ----------------------------------------------------------------------------
-// 13. DESACTIVAR PROMPTS Y CHEQUEO DE NAVEGADOR PREDETERMINADO
-// ----------------------------------------------------------------------------
-user_pref("browser.shell.checkDefaultBrowser", false);
-user_pref("browser.defaultbrowser.notificationbar", false);
-user_pref("browser.warnOnQuit", false);
 
 // ----------------------------------------------------------------------------
 // 14. MOTOR DE BÚSQUEDA PREDETERMINADO: GOOGLE & ESTABILIDAD DE NAVEGACIÓN

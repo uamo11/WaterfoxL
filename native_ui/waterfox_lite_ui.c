@@ -108,7 +108,7 @@ typedef struct {
 } AppCard;
 
 static AppCard g_apps[] = {
-    { L"1", L"X (Twitter)", L"Sin pantalla negra", L"https://twitter.com", L"x.bmp", IDB_X, RGB(0, 0, 0), {0}, NULL },
+    { L"1", L"X (Twitter)", L"Sin pantalla negra", L"https://x.com", L"x.bmp", IDB_X, RGB(0, 0, 0), {0}, NULL },
     { L"2", L"YT Music", L"Sin lagg / 0% CPU", L"https://music.youtube.com", L"ytm.bmp", IDB_YTM, RGB(220, 30, 30), {0}, NULL },
     { L"3", L"YouTube", L"H.264 por GPU", L"https://www.youtube.com", L"yt.bmp", IDB_YT, RGB(200, 20, 20), {0}, NULL },
     { L"4", L"Facebook", L"Sin biometría / Ligero", L"https://web.facebook.com", L"fb.bmp", IDB_FB, RGB(24, 119, 242), {0}, NULL },
@@ -183,7 +183,7 @@ typedef struct {
 static BookmarkItem g_bookmarks[MAX_BOOKMARKS] = {
     { L"Marcadores", L"action:bookmarks", L"folder.bmp", IDB_FOLDER, NULL, {0} },
     { L"Juegos Web ▾", L"action:games_folder", L"game_folder.bmp", IDB_GAME_FOLDER, NULL, {0} },
-    { L"X", L"https://twitter.com", L"x.bmp", IDB_X, NULL, {0} },
+    { L"X", L"https://x.com", L"x.bmp", IDB_X, NULL, {0} },
     { L"YT Music", L"https://music.youtube.com", L"ytm.bmp", IDB_YTM, NULL, {0} },
     { L"YouTube", L"https://www.youtube.com", L"yt.bmp", IDB_YT, NULL, {0} },
     { L"Facebook", L"https://web.facebook.com", L"fb.bmp", IDB_FB, NULL, {0} },
@@ -571,50 +571,18 @@ static void UrlEncodeSearchQuery(const wchar_t *query, wchar_t *outEncoded, size
 }
 
 // ----------------------------------------------------------------------------
-// Limpieza de Procesos Huérfanos de Waterfox (Sin Ventana Visible)
 // ----------------------------------------------------------------------------
-typedef struct {
-    DWORD pid;
-    BOOL hasVisible;
-} ProcWinInfo;
-
-static BOOL CALLBACK CheckProcWinProc(HWND hwnd, LPARAM lParam) {
-    ProcWinInfo *pInfo = (ProcWinInfo *)lParam;
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    if (pid == pInfo->pid && IsWindowVisible(hwnd)) {
-        pInfo->hasVisible = TRUE;
-        return FALSE;
-    }
-    return TRUE;
-}
-
-static BOOL HasVisibleWindow(DWORD pid) {
-    ProcWinInfo info = { pid, FALSE };
-    EnumWindows(CheckProcWinProc, (LPARAM)&info);
-    return info.hasVisible;
-}
-
+// Limpieza Segura de Procesos: NUNCA cerrar el navegador del usuario ni su música
+// Solo gestionar el proceso hijo g_geckoPid perteneciente a este contenedor nativo
+// ----------------------------------------------------------------------------
 static void TerminateOrphanedGeckoProcesses() {
-    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnap != INVALID_HANDLE_VALUE) {
-        PROCESSENTRY32W pe;
-        pe.dwSize = sizeof(pe);
-        if (Process32FirstW(hSnap, &pe)) {
-            do {
-                if (_wcsicmp(pe.szExeFile, L"waterfox.exe") == 0) {
-                    // Sólo terminar procesos huérfanos que no posean ventanas visibles
-                    if (!HasVisibleWindow(pe.th32ProcessID)) {
-                        HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
-                        if (hProc) {
-                            TerminateProcess(hProc, 0);
-                            CloseHandle(hProc);
-                        }
-                    }
-                }
-            } while (Process32NextW(hSnap, &pe));
+    if (g_geckoPid != 0) {
+        HANDLE hProc = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, g_geckoPid);
+        if (hProc) {
+            TerminateProcess(hProc, 0);
+            CloseHandle(hProc);
         }
-        CloseHandle(hSnap);
+        g_geckoPid = 0;
     }
 }
 
@@ -676,22 +644,20 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
         L"C:\\Program Files\\Win94\\waterfox.exe"
     };
 
-    // Primero intentar obtener el perfil real de Waterfox con las sesiones del usuario y uBlock
-    BOOL hasUserProfile = FindUserProfile(outProf, maxProf);
+    // Siempre usar el perfil dedicado portátil para aislar completamente Waterfox Lite.
+    // Esto garantiza que el navegador personal del usuario y su música nunca se interrumpan.
+    wchar_t testProf[MAX_PATH];
+    swprintf(testProf, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\profile", exePath);
+    if (GetFileAttributes(testProf) == INVALID_FILE_ATTRIBUTES) {
+        swprintf(testProf, MAX_PATH, L"%ls\\profile", exePath);
+    }
+    GetFullPathNameW(testProf, maxProf, outProf, NULL);
 
     for (size_t i = 0; i < sizeof(candidatesBin) / sizeof(candidatesBin[0]); i++) {
         wchar_t testBin[MAX_PATH];
         swprintf(testBin, MAX_PATH, candidatesBin[i], exePath);
         if (GetFileAttributes(testBin) != INVALID_FILE_ATTRIBUTES) {
             GetFullPathNameW(testBin, maxBin, outBin, NULL);
-            if (!hasUserProfile) {
-                wchar_t testProf[MAX_PATH];
-                swprintf(testProf, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\profile", exePath);
-                if (GetFileAttributes(testProf) == INVALID_FILE_ATTRIBUTES) {
-                    swprintf(testProf, MAX_PATH, L"%ls\\profile", exePath);
-                }
-                GetFullPathNameW(testProf, maxProf, outProf, NULL);
-            }
             return TRUE;
         }
     }
@@ -702,11 +668,6 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
     swprintf(curBin, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\app\\core\\waterfox.exe", curDir);
     if (GetFileAttributes(curBin) != INVALID_FILE_ATTRIBUTES) {
         GetFullPathNameW(curBin, maxBin, outBin, NULL);
-        if (!hasUserProfile) {
-            wchar_t curProf[MAX_PATH];
-            swprintf(curProf, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\profile", curDir);
-            GetFullPathNameW(curProf, maxProf, outProf, NULL);
-        }
         return TRUE;
     }
 
@@ -740,29 +701,34 @@ static BOOL IsGameUrl(const wchar_t *url) {
 // Acoplamiento e Incrustación de Ventana Gecko en Contenedor Nativo C
 // ----------------------------------------------------------------------------
 static BOOL CALLBACK EnumGeckoProc(HWND hwnd, LPARAM lParam) {
-    if (IsWindowVisible(hwnd)) {
-        DWORD pid = 0;
-        GetWindowThreadProcessId(hwnd, &pid);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (lParam != 0) {
+        if (pid != (DWORD)lParam) return TRUE;
+    } else {
         HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-        if (hProc) {
-            wchar_t exeName[MAX_PATH];
-            DWORD size = MAX_PATH;
-            if (QueryFullProcessImageNameW(hProc, 0, exeName, &size)) {
-                wchar_t *leaf = wcsrchr(exeName, L'\\');
-                if (leaf && _wcsicmp(leaf + 1, L"waterfox.exe") == 0) {
-                    wchar_t className[256];
-                    GetClassName(hwnd, className, 256);
-                    if (wcscmp(className, L"MozillaWindowClass") == 0) {
-                        HWND parent = GetParent(hwnd);
-                        if (parent == NULL || parent == g_hWndMain) {
-                            g_hFoundGecko = hwnd;
-                            CloseHandle(hProc);
-                            return FALSE;
-                        }
-                    }
-                }
+        if (!hProc) return TRUE;
+        wchar_t exeName[MAX_PATH];
+        DWORD size = MAX_PATH;
+        BOOL isWf = FALSE;
+        if (QueryFullProcessImageNameW(hProc, 0, exeName, &size)) {
+            wchar_t *leaf = wcsrchr(exeName, L'\\');
+            if (leaf && _wcsicmp(leaf + 1, L"waterfox.exe") == 0) {
+                isWf = TRUE;
             }
-            CloseHandle(hProc);
+        }
+        CloseHandle(hProc);
+        if (!isWf) return TRUE;
+    }
+
+    wchar_t className[256];
+    if (GetClassNameW(hwnd, className, 256) > 0) {
+        if (wcscmp(className, L"MozillaWindowClass") == 0) {
+            HWND parent = GetParent(hwnd);
+            if (parent == NULL || parent == g_hWndMain) {
+                g_hFoundGecko = hwnd;
+                return FALSE;
+            }
         }
     }
     return TRUE;
@@ -853,7 +819,8 @@ static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
     int childH = rc.bottom - topY;
     if (childH < 0) childH = 0;
 
-    SetWindowPos(hwndGecko, NULL, 0, topY, rc.right, childH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    SetWindowPos(hwndGecko, NULL, 0, topY, rc.right, childH, SWP_FRAMECHANGED | SWP_NOZORDER);
+    ShowWindow(hwndGecko, SW_SHOW);
     g_hGeckoWnd = hwndGecko;
     g_isGeckoDocking = FALSE;
     SetFocus(hwndGecko);
@@ -962,6 +929,8 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
             wchar_t cmdLine[2048];
             swprintf(cmdLine, 2048, L"\"%ls\" %ls", binPath, args);
             STARTUPINFO si = { sizeof(si) };
+            si.dwFlags = STARTF_USESHOWWINDOW;
+            si.wShowWindow = SW_HIDE;
             PROCESS_INFORMATION pi = { 0 };
             if (CreateProcessW(NULL, cmdLine, NULL, NULL, FALSE, 0, NULL, binDir, &si, &pi)) {
                 g_geckoPid = pi.dwProcessId;
@@ -970,7 +939,7 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
             } else {
                 ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
             }
-            SetTimer(hwnd, TIMER_DOCK_GECKO, 150, NULL);
+            SetTimer(hwnd, TIMER_DOCK_GECKO, 25, NULL);
         }
     } else {
         ShellExecute(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL);
@@ -1703,6 +1672,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         BOOL darkMode = TRUE;
         DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
 
+        TerminateOrphanedGeckoProcesses();
+        wchar_t binPathInit[MAX_PATH], profPathInit[MAX_PATH];
+        if (FindWaterfoxBinary(binPathInit, MAX_PATH, profPathInit, MAX_PATH)) {
+            wchar_t lockPathInit[MAX_PATH];
+            swprintf(lockPathInit, MAX_PATH, L"%ls\\parent.lock", profPathInit);
+            DeleteFileW(lockPathInit);
+        }
+
         wcscpy(g_tabs[0].title, L"Waterfox Lite - Home");
         wcscpy(g_tabs[0].url, L"about:home");
         g_tabs[0].isActive = TRUE;
@@ -1876,7 +1853,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 KillTimer(hwnd, TIMER_DOCK_GECKO);
                 DockGeckoWindow(hwnd, g_hFoundGecko);
                 InvalidateRect(hwnd, NULL, FALSE);
-            } else if (g_dockAttempts >= 60) {
+            } else if (g_dockAttempts >= 160) {
                 KillTimer(hwnd, TIMER_DOCK_GECKO);
                 g_isGeckoDocking = FALSE;
             }
@@ -2327,12 +2304,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
             DWORD geckoThreadId = GetWindowThreadProcessId(g_hGeckoWnd, NULL);
-            PostMessage(g_hGeckoWnd, WM_CLOSE, 0, 0);
+            SendMessage(g_hGeckoWnd, WM_CLOSE, 0, 0);
             if (geckoThreadId != 0 && geckoThreadId != GetCurrentThreadId()) {
                 AttachThreadInput(GetCurrentThreadId(), geckoThreadId, FALSE);
             }
             g_hGeckoWnd = NULL;
         }
+        if (g_geckoPid != 0) {
+            HANDLE hProc = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, g_geckoPid);
+            if (hProc) {
+                if (WaitForSingleObject(hProc, 500) == WAIT_TIMEOUT) {
+                    TerminateProcess(hProc, 0);
+                }
+                CloseHandle(hProc);
+            }
+            g_geckoPid = 0;
+        }
+        TerminateOrphanedGeckoProcesses();
         FreeIconCache();
         if (g_hFontNormal) { DeleteObject(g_hFontNormal); g_hFontNormal = NULL; }
         if (g_hFontBold)   { DeleteObject(g_hFontBold); g_hFontBold = NULL; }
@@ -2464,6 +2452,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
+
+    int argc = 0;
+    LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv && argc > 1) {
+        for (int i = 1; i < argc; i++) {
+            if (wcsncmp(argv[i], L"--", 2) != 0 && (wcsstr(argv[i], L"://") != NULL || wcsstr(argv[i], L".") != NULL)) {
+                NavigateTab(0, argv[i], argv[i]);
+                SetWindowText(g_hEditUrl, argv[i]);
+                LaunchUrl(hwnd, argv[i], FALSE);
+                break;
+            }
+        }
+        LocalFree(argv);
+    }
+
     EmptyWorkingSet(GetCurrentProcess());
 
     MSG msg;
