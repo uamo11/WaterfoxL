@@ -21,28 +21,25 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download Waterfox Base Runtime
+      - name: Download Waterfox Base Runtime (Legacy CPU/GPU Branch)
         shell: pwsh
         run: |
-          Write-Host "Fetching latest Waterfox release binary..."
-          $url = "https://github.com/WaterfoxCo/Waterfox/releases/download/6.5.0/Waterfox.6.5.0.en-US.win64.installer.exe"
-          # Try download or fallback to archive
-          try {
-            Invoke-WebRequest -Uri $url -OutFile "waterfox_installer.exe" -UserAgent "Mozilla/5.0"
-          } catch {
-            Write-Host "Using latest available Waterfox release..."
-            $apiRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/WaterfoxCo/Waterfox/releases"
-            $asset = $apiRelease[0].assets | Where-Object { $_.name -like "*win64*installer.exe" -or $_.name -like "*win64*.zip" } | Select-Object -First 1
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "waterfox_installer.exe"
+          Write-Host "Fetching Waterfox G6.0.20 base binary (optimized for older CPUs)..."
+          $url = "https://cdn1.waterfox.net/waterfox/releases/G6.0.20/WINNT_x86_64/Waterfox%20Setup%20G6.0.20.exe"
+          Invoke-WebRequest -Uri $url -OutFile "waterfox_installer.exe" -UserAgent "Mozilla/5.0"
+          
+          if (-not (Test-Path "waterfox_installer.exe") -or (Get-Item "waterfox_installer.exe").Length -lt 10000000) {
+            Write-Error "Failed to download complete Waterfox installer."
+            exit 1
           }
-          Write-Host "Base binary acquired successfully."
+          Write-Host "Base binary acquired successfully ($((Get-Item 'waterfox_installer.exe').Length) bytes)."
 
       - name: Extract & Prepare Portable Tree
         shell: pwsh
         run: |
           Write-Host "Extracting package into portable directory..."
           New-Item -ItemType Directory -Path "WaterfoxLite_Dist" -Force
-          # Extract with 7-Zip (available on windows-latest runner)
+          # Extract with 7-Zip
           7z x waterfox_installer.exe -o"WaterfoxLite_Dist\app" -y
           
           # Remove uninstaller stubs
