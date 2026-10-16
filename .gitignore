@@ -1,0 +1,19 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Waterfox build & temporary artifacts
+WaterfoxLite_Dist/
+*.zip
+*.sha256
+*.exe
+waterfox_installer*
+portable_profile/
+
+# OS artifacts
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

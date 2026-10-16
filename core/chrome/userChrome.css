@@ -1,0 +1,21 @@
+/* ==========================================================================
+   Waterfox Lite - userChrome.css
+   Interfaz ultraligera con animaciones reducidas para Pentium G620
+   ========================================================================== */
+
+/* Reducir transiciones de pestañas y botones para respuesta instantánea */
+#TabsToolbar, .tabbrowser-tab, .tab-background, #nav-bar {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Reducir el padding de la barra de pestañas para ganar espacio vertical */
+.tabbrowser-tab {
+  min-height: 32px !important;
+}
+
+/* Desactivar efectos de sombra pesados */
+#navigator-toolbox {
+  box-shadow: none !important;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2) !important;
+}

@@ -1,0 +1,126 @@
+name: Build Waterfox Lite (Legacy CPU & GPU Optimized)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-package:
+    name: Build & Package Waterfox Lite (x64 Legacy)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download Waterfox Base Runtime
+        shell: pwsh
+        run: |
+          Write-Host "Fetching latest Waterfox release binary..."
+          $url = "https://github.com/WaterfoxCo/Waterfox/releases/download/6.5.0/Waterfox.6.5.0.en-US.win64.installer.exe"
+          # Try download or fallback to archive
+          try {
+            Invoke-WebRequest -Uri $url -OutFile "waterfox_installer.exe" -UserAgent "Mozilla/5.0"
+          } catch {
+            Write-Host "Using latest available Waterfox release..."
+            $apiRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/WaterfoxCo/Waterfox/releases"
+            $asset = $apiRelease[0].assets | Where-Object { $_.name -like "*win64*installer.exe" -or $_.name -like "*win64*.zip" } | Select-Object -First 1
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "waterfox_installer.exe"
+          }
+          Write-Host "Base binary acquired successfully."
+
+      - name: Extract & Prepare Portable Tree
+        shell: pwsh
+        run: |
+          Write-Host "Extracting package into portable directory..."
+          New-Item -ItemType Directory -Path "WaterfoxLite_Dist" -Force
+          # Extract with 7-Zip (available on windows-latest runner)
+          7z x waterfox_installer.exe -o"WaterfoxLite_Dist\app" -y
+          
+          # Remove uninstaller stubs
+          Remove-Item -Path "WaterfoxLite_Dist\app\$*" -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Apply Waterfox Lite Core Patches & Engine
+        shell: pwsh
+        run: |
+          Write-Host "Applying Waterfox Lite legacy CPU & GPU patches..."
+          
+          # 1. Create distribution preferences
+          $prefDir = "WaterfoxLite_Dist\app\browser\defaults\preferences"
+          New-Item -ItemType Directory -Path $prefDir -Force
+          Copy-Item -Path "core\prefs\user.js" -Destination "$prefDir\00-waterfox-lite.js" -Force
+          
+          # 2. Setup distribution policies (Disable telemetry, force H.264, software webrender)
+          $policyDir = "WaterfoxLite_Dist\app\distribution"
+          New-Item -ItemType Directory -Path $policyDir -Force
+          $policyJson = @{
+            policies = @{
+              DisableTelemetry = $true
+              DisableFirefoxStudies = $true
+              DisablePocket = $true
+              OverrideFirstRunPage = ""
+              OverridePostUpdatePage = ""
+              Preferences = @{
+                "gfx.webrender.all" = $false
+                "gfx.webrender.software" = $true
+                "gfx.canvas.accelerated" = $false
+                "layers.acceleration.disabled" = $true
+                "media.mediasource.vp9.enabled" = $false
+                "media.av1.enabled" = $false
+                "dom.ipc.processCount" = 2
+                "toolkit.legacyUserProfileCustomizations.stylesheets" = $true
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          Set-Content -Path "$policyDir\policies.json" -Value $policyJson -Encoding UTF8
+
+          # 3. Create default portable profile with user.js and chrome CSS
+          $profileDir = "WaterfoxLite_Dist\profile"
+          $chromeDir = "$profileDir\chrome"
+          New-Item -ItemType Directory -Path $chromeDir -Force
+          Copy-Item -Path "core\prefs\user.js" -Destination "$profileDir\user.js" -Force
+          Copy-Item -Path "core\chrome\*" -Destination $chromeDir -Force -Recurse
+
+          # 4. Inject xapp and ytm debloat scripts
+          $modulesDir = "WaterfoxLite_Dist\modules"
+          New-Item -ItemType Directory -Path $modulesDir -Force
+          Copy-Item -Path "core\modules\*" -Destination $modulesDir -Force
+
+          # 5. Add one-click portable launcher
+          $launcherBat = @"
+          @echo off
+          title Waterfox Lite (Portable)
+          cd /d "%~dp0"
+          start "" "app\waterfox.exe" -profile "profile" -no-remote %*
+          exit
+          "@
+          Set-Content -Path "WaterfoxLite_Dist\WaterfoxLite.bat" -Value $launcherBat -Encoding ASCII
+
+          Write-Host "All patches, modules, and launcher injected successfully."
+
+      - name: Package Waterfox Lite Distribution
+        shell: pwsh
+        run: |
+          Write-Host "Creating Waterfox-Lite-x64-Legacy.zip..."
+          7z a -tzip "Waterfox-Lite-x64-Legacy.zip" ".\WaterfoxLite_Dist\*" -mx=9
+          
+          $hash = (Get-FileHash "Waterfox-Lite-x64-Legacy.zip" -Algorithm SHA256).Hash
+          Set-Content -Path "Waterfox-Lite-x64-Legacy.zip.sha256" -Value "$hash *Waterfox-Lite-x64-Legacy.zip"
+          Write-Host "SHA256: $hash"
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterfox-Lite-x64-Legacy
+          path: |
+            Waterfox-Lite-x64-Legacy.zip
+            Waterfox-Lite-x64-Legacy.zip.sha256
+          retention-days: 30
