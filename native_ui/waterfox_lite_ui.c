@@ -758,23 +758,28 @@ static BOOL IsGameUrl(const wchar_t *url) {
 static BOOL CALLBACK EnumGeckoProc(HWND hwnd, LPARAM lParam) {
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
-    if (lParam != 0) {
-        if (pid != (DWORD)lParam) return TRUE;
+
+    BOOL isCandidate = FALSE;
+    if (lParam != 0 && pid == (DWORD)lParam) {
+        isCandidate = TRUE;
     } else {
         HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-        if (!hProc) return TRUE;
-        wchar_t exeName[MAX_PATH];
-        DWORD size = MAX_PATH;
-        BOOL isWf = FALSE;
-        if (QueryFullProcessImageNameW(hProc, 0, exeName, &size)) {
-            wchar_t *leaf = wcsrchr(exeName, L'\\');
-            if (leaf && _wcsicmp(leaf + 1, L"waterfox.exe") == 0) {
-                isWf = TRUE;
+        if (hProc) {
+            wchar_t exePath[MAX_PATH];
+            DWORD size = MAX_PATH;
+            if (QueryFullProcessImageNameW(hProc, 0, exePath, &size)) {
+                wchar_t *leaf = wcsrchr(exePath, L'\\');
+                if (leaf && _wcsicmp(leaf + 1, L"waterfox.exe") == 0) {
+                    if (wcsstr(exePath, L"WaterfoxLite_Portable") != NULL || wcsstr(exePath, L"core") != NULL) {
+                        isCandidate = TRUE;
+                    }
+                }
             }
+            CloseHandle(hProc);
         }
-        CloseHandle(hProc);
-        if (!isWf) return TRUE;
     }
+
+    if (!isCandidate) return TRUE;
 
     wchar_t className[256];
     if (GetClassNameW(hwnd, className, 256) > 0) {
@@ -782,6 +787,7 @@ static BOOL CALLBACK EnumGeckoProc(HWND hwnd, LPARAM lParam) {
             HWND parent = GetParent(hwnd);
             if (parent == NULL || parent == g_hWndMain) {
                 g_hFoundGecko = hwnd;
+                g_geckoPid = pid;
                 return FALSE;
             }
         }
@@ -852,8 +858,8 @@ static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
     if (!hwndGecko || !IsWindow(hwndGecko)) return;
 
     LONG_PTR style = GetWindowLongPtr(hwndGecko, GWL_STYLE);
-    style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_BORDER);
-    style |= WS_CHILD | WS_CLIPSIBLINGS;
+    style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_BORDER | WS_DLGFRAME | WS_SYSMENU);
+    style |= WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_VISIBLE;
     SetWindowLongPtr(hwndGecko, GWL_STYLE, style);
     SetParent(hwndGecko, hwndParent);
 
@@ -875,8 +881,9 @@ static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
     int childH = rc.bottom - topY;
     if (childH < 0) childH = 0;
 
-    SetWindowPos(hwndGecko, NULL, 0, topY, rc.right, childH, SWP_FRAMECHANGED | SWP_NOZORDER);
+    SetWindowPos(hwndGecko, HWND_TOP, 0, topY, rc.right, childH, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW);
     ShowWindow(hwndGecko, SW_SHOW);
+    UpdateWindow(hwndGecko);
     g_hGeckoWnd = hwndGecko;
     g_isGeckoDocking = FALSE;
     SetFocus(hwndGecko);
@@ -935,6 +942,15 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
             swprintf(args, 1024, L"-profile \"%ls\" -url \"%ls\"", profPath, url);
         }
 
+        // 1. Si no tenemos g_hGeckoWnd, verificar si ya existe una ventana Gecko activa de Waterfox Lite
+        if (!g_hGeckoWnd || !IsWindow(g_hGeckoWnd)) {
+            g_hFoundGecko = NULL;
+            EnumWindows(EnumGeckoProc, 0);
+            if (g_hFoundGecko) {
+                DockGeckoWindow(hwnd, g_hFoundGecko);
+            }
+        }
+
         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
             // Ya está acoplado: mostrar ventana y enviar navegación
             ShowWindow(g_hGeckoWnd, SW_SHOW);
@@ -943,7 +959,8 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
             int topY = g_showBookmarksBar ? 114 : 84;
             int childH = rc.bottom - topY;
             if (childH < 0) childH = 0;
-            SetWindowPos(g_hGeckoWnd, NULL, 0, topY, rc.right, childH, SWP_NOZORDER | SWP_SHOWWINDOW);
+            SetWindowPos(g_hGeckoWnd, HWND_TOP, 0, topY, rc.right, childH, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+            UpdateWindow(g_hGeckoWnd);
 
             if (needNewGeckoTab) {
                 g_geckoTabCount++;
@@ -964,9 +981,7 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
             ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
             SetFocus(g_hGeckoWnd);
         } else {
-            // Eliminar procesos huérfanos y parent.lock antes de lanzar
-            TerminateOrphanedGeckoProcesses();
-            Sleep(50);
+            // Eliminar parent.lock residual de la sesión portátil si el proceso no responde
             DeleteFile(lockPath);
             g_hGeckoWnd = NULL;
             g_isGeckoDocking = TRUE;
@@ -995,7 +1010,7 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
             } else {
                 ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
             }
-            SetTimer(hwnd, TIMER_DOCK_GECKO, 25, NULL);
+            SetTimer(hwnd, TIMER_DOCK_GECKO, 40, NULL);
         }
     } else {
         ShellExecute(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL);
@@ -1491,9 +1506,10 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     }
 
     // ------------------------------------------------------------------------
-    // 4. Panel Central de la Nueva Pestaña (Home Stage) - Solo si Gecko no está activo
+    // 4. Panel Central de la Nueva Pestaña (Home Stage) o Estado de Carga Web
     // ------------------------------------------------------------------------
-    if (!(g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd))) {
+    BOOL isHomeTab = (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") == 0);
+    if (isHomeTab) {
         int centerY = currentY + 20;
 
         if (g_hBmpWaterfox) {
@@ -1571,6 +1587,23 @@ static void RenderUI(HWND hwnd, HDC hdc) {
             SetTextColor(memDC, COLOR_TEXT_MUTED);
             SelectObject(memDC, g_hFontSmall);
             DrawText(memDC, g_apps[i].desc, -1, &descRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        }
+    } else {
+        // En pestaña web: Desactivar rectángulos de las apps para evitar clics accidentales
+        for (int i = 0; i < (int)NUM_APPS; i++) {
+            SetRectEmpty(&g_apps[i].rect);
+        }
+        // Si Gecko aún no está acoplado o visible, mostrar estado de carga limpio
+        if (!(g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd))) {
+            SelectObject(memDC, g_hFontTitle);
+            SetTextColor(memDC, COLOR_TEXT);
+            RECT titleRect = { 0, currentY + 120, width, currentY + 155 };
+            DrawText(memDC, g_tabs[g_activeTabIdx].title, -1, &titleRect, DT_SINGLELINE | DT_CENTER);
+
+            SelectObject(memDC, g_hFontSmall);
+            SetTextColor(memDC, COLOR_TEXT_MUTED);
+            RECT loadRect = { 0, currentY + 160, width, currentY + 185 };
+            DrawText(memDC, L"Sincronizando con el motor web Gecko...", -1, &loadRect, DT_SINGLELINE | DT_CENTER);
         }
     }
 
@@ -2007,6 +2040,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_TIMER: {
         if (wParam == TIMER_PROGRESS) {
+            if (g_tabs[g_activeTabIdx].isWeb && (!g_hGeckoWnd || !IsWindow(g_hGeckoWnd))) {
+                g_hFoundGecko = NULL;
+                EnumWindows(EnumGeckoProc, (LPARAM)g_geckoPid);
+                if (g_hFoundGecko) {
+                    DockGeckoWindow(hwnd, g_hFoundGecko);
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            }
             if (g_isLoading) {
                 if (g_loadProgress < 85) {
                     g_loadProgress += (85 - g_loadProgress) / 4 + 1;
@@ -2030,6 +2071,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (s_trimCount >= 10) {
                 s_trimCount = 0;
                 EmptyWorkingSet(GetCurrentProcess());
+            }
+            if (g_tabs[g_activeTabIdx].isWeb && (!g_hGeckoWnd || !IsWindow(g_hGeckoWnd))) {
+                g_hFoundGecko = NULL;
+                EnumWindows(EnumGeckoProc, (LPARAM)g_geckoPid);
+                if (g_hFoundGecko) {
+                    DockGeckoWindow(hwnd, g_hFoundGecko);
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
             }
             if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd) && g_tabs[g_activeTabIdx].isWeb) {
                 wchar_t currentTitle[256];
@@ -2059,7 +2108,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 KillTimer(hwnd, TIMER_DOCK_GECKO);
                 DockGeckoWindow(hwnd, g_hFoundGecko);
                 InvalidateRect(hwnd, NULL, FALSE);
-            } else if (g_dockAttempts >= 160) {
+            } else if (g_dockAttempts >= 600) {
                 KillTimer(hwnd, TIMER_DOCK_GECKO);
                 g_isGeckoDocking = FALSE;
             }
