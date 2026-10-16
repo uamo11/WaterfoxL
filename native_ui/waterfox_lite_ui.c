@@ -41,6 +41,7 @@
 #define COLOR_GREEN         RGB(63, 185, 80)
 #define COLOR_RED           RGB(248, 81, 73)
 #define COLOR_GOLD          RGB(235, 180, 50)
+#define COLOR_BTN_DISABLED  RGB(50, 56, 66)
 
 // Comandos de Menú y Acciones
 #define IDM_NEW_TAB          2001
@@ -59,11 +60,15 @@
 #define IDM_ZOOM_OUT         2014
 #define IDM_ZOOM_RESET       2015
 
-// Estructura de Pestaña
+// Estructura de Pestaña con Historial Real
 #define MAX_TABS 12
+#define MAX_HISTORY 16
 typedef struct {
     wchar_t title[64];
     wchar_t url[512];
+    wchar_t history[MAX_HISTORY][512];
+    int historyCount;
+    int historyIdx;
     RECT rect;
     RECT closeRect;
     BOOL isActive;
@@ -119,6 +124,7 @@ static HFONT g_hFontNormal = NULL;
 static HFONT g_hFontBold = NULL;
 static HFONT g_hFontTitle = NULL;
 static HFONT g_hFontSmall = NULL;
+static HBRUSH g_hEditBgBrush = NULL;
 
 static HBITMAP g_hBmpWaterfox = NULL;
 static HBITMAP g_hBmpFolder = NULL;
@@ -139,12 +145,30 @@ static RECT g_rcBookmarksBar;
 // Medición de Memoria RAM Real
 // ----------------------------------------------------------------------------
 static double GetProcessRAM_MB() {
-    SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
     PROCESS_MEMORY_COUNTERS_EX pmc;
     if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
         return (double)pmc.PrivateUsage / (1024.0 * 1024.0);
     }
     return 0.0;
+}
+
+// ----------------------------------------------------------------------------
+// DPI Awareness compatible con Windows 7, 8.1, 10, 11
+// ----------------------------------------------------------------------------
+typedef BOOL (WINAPI *SetProcessDpiAwarenessContextProc)(HANDLE);
+typedef BOOL (WINAPI *SetProcessDPIAwareProc)(void);
+
+static void EnableDpiAwareness() {
+    HMODULE hUser32 = GetModuleHandle(L"user32.dll");
+    if (hUser32) {
+        SetProcessDpiAwarenessContextProc pSetDpi = (SetProcessDpiAwarenessContextProc)GetProcAddress(hUser32, "SetProcessDpiAwarenessContext");
+        if (pSetDpi) {
+            pSetDpi((HANDLE)-4); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+            return;
+        }
+        SetProcessDPIAwareProc pAware = (SetProcessDPIAwareProc)GetProcAddress(hUser32, "SetProcessDPIAware");
+        if (pAware) pAware();
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -154,7 +178,7 @@ static HBITMAP LoadCachedBmp(const wchar_t *filename) {
     wchar_t exePath[MAX_PATH];
     GetModuleFileName(NULL, exePath, MAX_PATH);
     wchar_t *lastSlash = wcsrchr(exePath, L'\\');
-    if (lastSlash) *lastSlash = L'\0'; // Directorio del ejecutable
+    if (lastSlash) *lastSlash = L'\0';
 
     wchar_t fullPath[MAX_PATH];
     // 1. Probar en <exePath>\cache\<filename>
@@ -162,6 +186,10 @@ static HBITMAP LoadCachedBmp(const wchar_t *filename) {
     if (GetFileAttributes(fullPath) == INVALID_FILE_ATTRIBUTES) {
         // 2. Probar en <exePath>\native_ui\cache\<filename>
         swprintf(fullPath, MAX_PATH, L"%s\\native_ui\\cache\\%s", exePath, filename);
+        if (GetFileAttributes(fullPath) == INVALID_FILE_ATTRIBUTES) {
+            // 3. Probar en <exePath>\..\native_ui\cache\<filename>
+            swprintf(fullPath, MAX_PATH, L"%s\\..\\native_ui\\cache\\%s", exePath, filename);
+        }
     }
     return (HBITMAP)LoadImage(NULL, fullPath, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
 }
@@ -176,31 +204,175 @@ static void InitIconCache() {
 
 static void FreeIconCache() {
     for (int i = 0; i < (int)NUM_APPS; i++) {
-        if (g_apps[i].hCachedBmp) DeleteObject(g_apps[i].hCachedBmp);
+        if (g_apps[i].hCachedBmp) {
+            DeleteObject(g_apps[i].hCachedBmp);
+            g_apps[i].hCachedBmp = NULL;
+        }
     }
-    if (g_hBmpWaterfox) DeleteObject(g_hBmpWaterfox);
-    if (g_hBmpFolder) DeleteObject(g_hBmpFolder);
+    if (g_hBmpWaterfox) {
+        DeleteObject(g_hBmpWaterfox);
+        g_hBmpWaterfox = NULL;
+    }
+    if (g_hBmpFolder) {
+        DeleteObject(g_hBmpFolder);
+        g_hBmpFolder = NULL;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Localizador Inteligente de Waterfox Lite
+// ----------------------------------------------------------------------------
+static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, DWORD maxProf) {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileName(NULL, exePath, MAX_PATH);
+    wchar_t *lastSlash = wcsrchr(exePath, L'\\');
+    if (lastSlash) *lastSlash = L'\0';
+
+    const wchar_t *candidatesBin[] = {
+        L"%s\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
+        L"%s\\..\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
+        L"%s\\app\\core\\waterfox.exe",
+        L"%s\\app\\waterfox.exe",
+        L"%s\\core\\waterfox.exe",
+        L"%s\\waterfox.exe"
+    };
+
+    const wchar_t *candidatesProf[] = {
+        L"%s\\WaterfoxLite_Portable\\profile",
+        L"%s\\..\\WaterfoxLite_Portable\\profile",
+        L"%s\\profile",
+        L"%s\\profile",
+        L"%s\\profile",
+        L"%s\\profile"
+    };
+
+    for (size_t i = 0; i < sizeof(candidatesBin) / sizeof(candidatesBin[0]); i++) {
+        wchar_t testBin[MAX_PATH];
+        swprintf(testBin, MAX_PATH, candidatesBin[i], exePath);
+        if (GetFileAttributes(testBin) != INVALID_FILE_ATTRIBUTES) {
+            wcsncpy(outBin, testBin, maxBin);
+            swprintf(outProf, maxProf, candidatesProf[i], exePath);
+            return TRUE;
+        }
+    }
+
+    // Fallback: Probar en el directorio actual de trabajo
+    wchar_t curDir[MAX_PATH];
+    GetCurrentDirectory(MAX_PATH, curDir);
+    wchar_t curBin[MAX_PATH];
+    swprintf(curBin, MAX_PATH, L"%s\\WaterfoxLite_Portable\\app\\core\\waterfox.exe", curDir);
+    if (GetFileAttributes(curBin) != INVALID_FILE_ATTRIBUTES) {
+        wcsncpy(outBin, curBin, maxBin);
+        swprintf(outProf, maxProf, L"%s\\WaterfoxLite_Portable\\profile", curDir);
+        return TRUE;
+    }
+
+    outBin[0] = L'\0';
+    outProf[0] = L'\0';
+    return FALSE;
+}
+
+// ----------------------------------------------------------------------------
+// Detección de Juegos Web para Web Game Shield
+// ----------------------------------------------------------------------------
+static BOOL IsGameUrl(const wchar_t *url) {
+    if (!url) return FALSE;
+    if (wcsstr(url, L"fiveplay.lol") != NULL) return TRUE;
+    if (wcsstr(url, L"poki.com") != NULL) return TRUE;
+    if (wcsstr(url, L"crazygames.com") != NULL) return TRUE;
+    if (wcsstr(url, L"krunker.io") != NULL) return TRUE;
+    return FALSE;
 }
 
 // ----------------------------------------------------------------------------
 // Lanzador hacia Waterfox Lite
 // ----------------------------------------------------------------------------
-static void LaunchUrl(const wchar_t *url) {
+static void LaunchUrl(HWND hwnd, const wchar_t *url) {
     if (!url || wcslen(url) == 0) return;
 
-    wchar_t curDir[MAX_PATH];
-    GetCurrentDirectory(MAX_PATH, curDir);
-    wchar_t targetPath[MAX_PATH];
-    swprintf(targetPath, MAX_PATH, L"%s\\WaterfoxLite_Portable\\app\\core\\waterfox.exe", curDir);
+    // Comprobar si el Web Game Shield está activo y bloquea el juego
+    if (g_shieldBlocked && IsGameUrl(url)) {
+        int resp = MessageBox(hwnd,
+            L"🛡️ Web Game Shield Bloqueado\n\n"
+            L"Se ha prevenido la ejecución del juego web pesado para proteger la estabilidad del Pentium G620 y la GPU.\n\n"
+            L"¿Deseas desactivar el escudo temporalmente y ejecutar el juego con el Booster optimizado a 360p/30FPS?",
+            L"Waterfox Lite - Web Game Shield", MB_YESNO | MB_ICONWARNING);
+        if (resp == IDYES) {
+            g_shieldBlocked = FALSE;
+            InvalidateRect(hwnd, NULL, FALSE);
+        } else {
+            return;
+        }
+    }
 
-    if (GetFileAttributes(targetPath) != INVALID_FILE_ATTRIBUTES) {
+    wchar_t binPath[MAX_PATH];
+    wchar_t profPath[MAX_PATH];
+    if (FindWaterfoxBinary(binPath, MAX_PATH, profPath, MAX_PATH)) {
         wchar_t args[1024];
-        wchar_t profile[MAX_PATH];
-        swprintf(profile, MAX_PATH, L"%s\\WaterfoxLite_Portable\\profile", curDir);
-        swprintf(args, 1024, L"-profile \"%s\" -no-remote \"%s\"", profile, url);
-        ShellExecute(NULL, L"open", targetPath, args, NULL, SW_SHOWNORMAL);
+        swprintf(args, 1024, L"-profile \"%s\" -no-remote \"%s\"", profPath, url);
+        ShellExecute(NULL, L"open", binPath, args, NULL, SW_SHOWNORMAL);
     } else {
         ShellExecute(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Navegación de Pestañas con Historial
+// ----------------------------------------------------------------------------
+static void NavigateTab(int tabIdx, const wchar_t *title, const wchar_t *url) {
+    if (tabIdx < 0 || tabIdx >= g_tabCount) return;
+    BrowserTab *t = &g_tabs[tabIdx];
+    wcsncpy(t->title, title ? title : L"Nueva Pestaña", 63);
+    t->title[63] = L'\0';
+    wcsncpy(t->url, url ? url : L"about:home", 511);
+    t->url[511] = L'\0';
+
+    if (t->historyCount == 0 || wcscmp(t->history[t->historyIdx], t->url) != 0) {
+        if (t->historyIdx + 1 < MAX_HISTORY) {
+            t->historyIdx++;
+            wcsncpy(t->history[t->historyIdx], t->url, 511);
+            t->historyCount = t->historyIdx + 1;
+        }
+    }
+}
+
+static void CreateNewTab(HWND hwnd, const wchar_t *title, const wchar_t *url) {
+    if (g_tabCount < MAX_TABS) {
+        int newIdx = g_tabCount;
+        wcsncpy(g_tabs[newIdx].title, title ? title : L"Nueva Pestaña", 63);
+        wcsncpy(g_tabs[newIdx].url, url ? url : L"about:home", 511);
+        g_tabs[newIdx].historyCount = 1;
+        g_tabs[newIdx].historyIdx = 0;
+        wcsncpy(g_tabs[newIdx].history[0], g_tabs[newIdx].url, 511);
+        for (int j = 0; j <= newIdx; j++) g_tabs[j].isActive = (j == newIdx);
+        g_activeTabIdx = newIdx;
+        g_tabCount++;
+        SetWindowText(g_hEditUrl, wcscmp(g_tabs[newIdx].url, L"about:home") == 0 ? L"" : g_tabs[newIdx].url);
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+}
+
+static void CloseTab(HWND hwnd, int tabIdx) {
+    if (tabIdx < 0 || tabIdx >= g_tabCount) return;
+    if (g_tabCount > 1) {
+        for (int j = tabIdx; j < g_tabCount - 1; j++) {
+            g_tabs[j] = g_tabs[j + 1];
+        }
+        g_tabCount--;
+        if (g_activeTabIdx >= g_tabCount) g_activeTabIdx = g_tabCount - 1;
+        for (int k = 0; k < g_tabCount; k++) {
+            g_tabs[k].isActive = (k == g_activeTabIdx);
+        }
+        SetWindowText(g_hEditUrl, wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") == 0 ? L"" : g_tabs[g_activeTabIdx].url);
+        InvalidateRect(hwnd, NULL, FALSE);
+    } else {
+        wcscpy(g_tabs[0].title, L"Waterfox Lite - Home");
+        wcscpy(g_tabs[0].url, L"about:home");
+        g_tabs[0].historyCount = 1;
+        g_tabs[0].historyIdx = 0;
+        wcscpy(g_tabs[0].history[0], L"about:home");
+        SetWindowText(g_hEditUrl, L"");
+        InvalidateRect(hwnd, NULL, FALSE);
     }
 }
 
@@ -288,15 +460,15 @@ static void SaveDCtoBMP(HDC hdc, int width, int height, const wchar_t *filename)
 }
 
 // ----------------------------------------------------------------------------
-// Renderizado Principal de la Interfaz Waterfox Lite
+// Renderizado Principal de la Interfaz Waterfox Lite (Doble Buffer GDI)
 // ----------------------------------------------------------------------------
 static void RenderUI(HWND hwnd, HDC hdc) {
-    RECT clientRect = { 0, 0, 1060, 660 };
+    RECT clientRect = { 0, 0, 1080, 680 };
     if (hwnd) GetClientRect(hwnd, &clientRect);
     int width = clientRect.right - clientRect.left;
     int height = clientRect.bottom - clientRect.top;
-    if (width <= 0) width = 1060;
-    if (height <= 0) height = 660;
+    if (width <= 0) width = 1080;
+    if (height <= 0) height = 680;
 
     HDC screenDC = GetDC(NULL);
     HDC memDC = CreateCompatibleDC(screenDC);
@@ -335,7 +507,6 @@ static void RenderUI(HWND hwnd, HDC hdc) {
         DrawDarkRect(memDC, &g_tabs[i].rect, tabBg, tabBorder, 6);
 
         if (isActive) {
-            // Línea azul superior de pestaña activa
             RECT tabLine = { g_tabs[i].rect.left + 6, g_tabs[i].rect.top, g_tabs[i].rect.right - 6, g_tabs[i].rect.top + 3 };
             HBRUSH hAccent = CreateSolidBrush(COLOR_ACCENT);
             FillRect(memDC, &tabLine, hAccent);
@@ -384,26 +555,34 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     FillRect(memDC, &toolbarRect, hToolBrush);
     DeleteObject(hToolBrush);
 
-    // Botones de Navegación: Atrás, Adelante, Recargar, Inicio
+    // Estados de Habilitación para Atrás y Adelante
+    BrowserTab *activeTab = &g_tabs[g_activeTabIdx];
+    BOOL canBack = (activeTab->historyIdx > 0);
+    BOOL canFwd  = (activeTab->historyIdx + 1 < activeTab->historyCount);
+
     g_rcBack.left = 10; g_rcBack.top = 47; g_rcBack.right = 38; g_rcBack.bottom = 77;
     g_rcFwd.left = 42; g_rcFwd.top = 47; g_rcFwd.right = 70; g_rcFwd.bottom = 77;
     g_rcReload.left = 74; g_rcReload.top = 47; g_rcReload.right = 102; g_rcReload.bottom = 77;
     g_rcHome.left = 106; g_rcHome.top = 47; g_rcHome.right = 134; g_rcHome.bottom = 77;
 
-    DrawDarkRect(memDC, &g_rcBack, (g_hoveredBtn == 1) ? COLOR_CARD_HOVER : RGB(28, 33, 40), COLOR_BORDER, 6);
-    DrawDarkRect(memDC, &g_rcFwd, (g_hoveredBtn == 2) ? COLOR_CARD_HOVER : RGB(28, 33, 40), COLOR_BORDER, 6);
+    DrawDarkRect(memDC, &g_rcBack, (g_hoveredBtn == 1 && canBack) ? COLOR_CARD_HOVER : RGB(28, 33, 40), COLOR_BORDER, 6);
+    DrawDarkRect(memDC, &g_rcFwd, (g_hoveredBtn == 2 && canFwd) ? COLOR_CARD_HOVER : RGB(28, 33, 40), COLOR_BORDER, 6);
     DrawDarkRect(memDC, &g_rcReload, (g_hoveredBtn == 3) ? COLOR_CARD_HOVER : RGB(28, 33, 40), COLOR_BORDER, 6);
     DrawDarkRect(memDC, &g_rcHome, (g_hoveredBtn == 4) ? COLOR_CARD_HOVER : RGB(28, 33, 40), COLOR_BORDER, 6);
 
-    SetTextColor(memDC, COLOR_TEXT);
     SelectObject(memDC, g_hFontBold);
+    SetTextColor(memDC, canBack ? COLOR_TEXT : COLOR_BTN_DISABLED);
     DrawText(memDC, L"‹", -1, &g_rcBack, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    SetTextColor(memDC, canFwd ? COLOR_TEXT : COLOR_BTN_DISABLED);
     DrawText(memDC, L"›", -1, &g_rcFwd, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    SetTextColor(memDC, COLOR_TEXT);
     DrawText(memDC, L"↻", -1, &g_rcReload, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
     SelectObject(memDC, g_hFontSmall);
     DrawText(memDC, L"🏠", -1, &g_rcHome, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
-    // Botones del lado derecho: Menú Hamburguesa '⋮' / '☰' y Game Shield
+    // Botones del lado derecho: Menú Hamburguesa '⋮' y Game Shield
     g_rcMenu.left = width - 42; g_rcMenu.top = 47; g_rcMenu.right = width - 10; g_rcMenu.bottom = 77;
     DrawDarkRect(memDC, &g_rcMenu, (g_hoveredBtn == 5) ? COLOR_CARD_HOVER : RGB(28, 33, 40), COLOR_BORDER, 6);
     SetTextColor(memDC, COLOR_TEXT);
@@ -445,7 +624,6 @@ static void RenderUI(HWND hwnd, HDC hdc) {
         FillRect(memDC, &g_rcBookmarksBar, hBmBrush);
         DeleteObject(hBmBrush);
 
-        // Línea divisoria inferior
         RECT bmLine = { 0, g_rcBookmarksBar.bottom - 1, width, g_rcBookmarksBar.bottom };
         HBRUSH hBorderBrush = CreateSolidBrush(COLOR_BORDER);
         FillRect(memDC, &bmLine, hBorderBrush);
@@ -481,39 +659,43 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     // ------------------------------------------------------------------------
     // 4. Panel Central de la Nueva Pestaña (Home Stage)
     // ------------------------------------------------------------------------
-    int centerY = currentY + 28;
+    int centerY = currentY + 24;
 
     // Logotipo e Identidad Waterfox Lite
     if (g_hBmpWaterfox) {
-        DrawIconBmp(memDC, g_hBmpWaterfox, (width - 48) / 2, centerY - 6, 48, 48);
-        centerY += 48;
+        DrawIconBmp(memDC, g_hBmpWaterfox, (width - 48) / 2, centerY, 48, 48);
+        centerY += 52;
     }
 
     SelectObject(memDC, g_hFontTitle);
     SetTextColor(memDC, COLOR_TEXT);
-    RECT titleRect = { 0, centerY, width, centerY + 36 };
+    RECT titleRect = { 0, centerY, width, centerY + 34 };
     DrawText(memDC, L"Waterfox Lite (Native C Theme)", -1, &titleRect, DT_SINGLELINE | DT_CENTER);
 
-    // Subtítulo & Hardware Badge
     SelectObject(memDC, g_hFontSmall);
     SetTextColor(memDC, COLOR_ACCENT);
-    RECT badgeRect = { 0, centerY + 38, width, centerY + 60 };
+    RECT badgeRect = { 0, centerY + 36, width, centerY + 58 };
     DrawText(memDC, L"⚡ Motor Ultra-Lite nativo en C | Iconos en Caché | Intel Pentium G620 & HD Graphics", -1, &badgeRect, DT_SINGLELINE | DT_CENTER);
 
     // ------------------------------------------------------------------------
-    // 5. Cuadrícula de Apps REA (6 Tarjetas con Iconos en Caché)
+    // 5. Cuadrícula Responsiva de Apps REA (6 Tarjetas con Iconos en Caché)
     // ------------------------------------------------------------------------
-    int gridStartY = centerY + 78;
-    int cardWidth = 148;
-    int cardHeight = 115;
-    int cardGap = 16;
-    int totalGridWidth = (6 * cardWidth) + (5 * cardGap);
+    int gridStartY = centerY + 72;
+    int cols = (width >= 1020) ? 6 : 3;
+    int cardWidth = (cols == 6) ? 148 : 220;
+    int cardHeight = (cols == 6) ? 115 : 100;
+    int cardGapX = 16;
+    int cardGapY = 14;
+    int totalGridWidth = (cols * cardWidth) + ((cols - 1) * cardGapX);
     int gridStartX = (width - totalGridWidth) / 2;
     if (gridStartX < 16) gridStartX = 16;
 
     for (int i = 0; i < (int)NUM_APPS; i++) {
-        int x = gridStartX + i * (cardWidth + cardGap);
-        int y = gridStartY;
+        int r = i / cols;
+        int c = i % cols;
+        int x = gridStartX + c * (cardWidth + cardGapX);
+        int y = gridStartY + r * (cardHeight + cardGapY);
+
         g_apps[i].rect.left = x;
         g_apps[i].rect.top = y;
         g_apps[i].rect.right = x + cardWidth;
@@ -533,7 +715,7 @@ static void RenderUI(HWND hwnd, HDC hdc) {
 
         // Icono desde Caché en Disco (BMP)
         int iconX = x + (cardWidth - 32) / 2;
-        int iconY = y + 14;
+        int iconY = y + 12;
         if (g_apps[i].hCachedBmp) {
             DrawIconBmp(memDC, g_apps[i].hCachedBmp, iconX, iconY, 32, 32);
         } else {
@@ -542,13 +724,13 @@ static void RenderUI(HWND hwnd, HDC hdc) {
         }
 
         // Nombre de la App
-        RECT nameRect = { x + 6, y + 56, x + cardWidth - 6, y + 76 };
+        RECT nameRect = { x + 6, y + 50, x + cardWidth - 6, y + 70 };
         SetTextColor(memDC, COLOR_TEXT);
         SelectObject(memDC, g_hFontBold);
         DrawText(memDC, g_apps[i].name, -1, &nameRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
         // Descripción de optimización
-        RECT descRect = { x + 4, y + 78, x + cardWidth - 4, y + 104 };
+        RECT descRect = { x + 4, y + 72, x + cardWidth - 4, y + 94 };
         SetTextColor(memDC, COLOR_TEXT_MUTED);
         SelectObject(memDC, g_hFontSmall);
         DrawText(memDC, g_apps[i].desc, -1, &descRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
@@ -576,6 +758,28 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     SelectObject(memDC, oldBmp);
     DeleteObject(memBmp);
     DeleteDC(memDC);
+}
+
+// ----------------------------------------------------------------------------
+// Popup de Menú de Marcadores Rápidos
+// ----------------------------------------------------------------------------
+static void ShowBookmarksPopup(HWND hwnd, RECT *anchorRect) {
+    HMENU hMenu = CreatePopupMenu();
+    for (int i = 1; i < (int)NUM_BOOKMARKS; i++) {
+        AppendMenu(hMenu, MF_STRING, 3000 + i, g_bookmarks[i].title);
+    }
+    POINT pt = { anchorRect->left, anchorRect->bottom };
+    ClientToScreen(hwnd, &pt);
+    int cmd = TrackPopupMenu(hMenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, NULL);
+    DestroyMenu(hMenu);
+
+    if (cmd >= 3001 && cmd < 3000 + (int)NUM_BOOKMARKS) {
+        int idx = cmd - 3000;
+        NavigateTab(g_activeTabIdx, g_bookmarks[idx].title, g_bookmarks[idx].url);
+        SetWindowText(g_hEditUrl, g_bookmarks[idx].url);
+        LaunchUrl(hwnd, g_bookmarks[idx].url);
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -625,27 +829,25 @@ static void ShowMainMenu(HWND hwnd) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE: {
-        // Habilitar Modo Oscuro en la barra de título nativa de Windows
         BOOL darkMode = TRUE;
         DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
 
-        // Inicializar pestañas por defecto
         wcscpy(g_tabs[0].title, L"Waterfox Lite - Home");
         wcscpy(g_tabs[0].url, L"about:home");
         g_tabs[0].isActive = TRUE;
+        g_tabs[0].historyCount = 1;
+        g_tabs[0].historyIdx = 0;
+        wcscpy(g_tabs[0].history[0], L"about:home");
         g_tabCount = 1;
         g_activeTabIdx = 0;
 
-        // Cargar iconos de caché en disco
         InitIconCache();
 
-        // Tipografías Segoe UI
         g_hFontNormal = CreateFont(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         g_hFontBold   = CreateFont(15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         g_hFontTitle  = CreateFont(24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         g_hFontSmall  = CreateFont(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
 
-        // Control Edit para la barra de direcciones / búsqueda
         g_hEditUrl = CreateWindowEx(
             0, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
@@ -656,6 +858,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar en la web o presiona 1-6 para abrir apps...");
 
         SetTimer(hwnd, 1, 1000, NULL);
+        return 0;
+    }
+
+    case WM_GETMINMAXINFO: {
+        LPMINMAXINFO lpMMI = (LPMINMAXINFO)lParam;
+        lpMMI->ptMinTrackSize.x = 800;
+        lpMMI->ptMinTrackSize.y = 500;
         return 0;
     }
 
@@ -670,6 +879,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_TIMER: {
+        static int s_trimCount = 0;
+        s_trimCount++;
+        if (s_trimCount >= 10) {
+            s_trimCount = 0;
+            EmptyWorkingSet(GetCurrentProcess());
+        }
+
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
         RECT footer = { 0, clientRect.bottom - 34, clientRect.right, clientRect.bottom };
@@ -690,7 +906,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_hoveredBookmark = -1;
         g_hoveredBtn = 0;
 
-        // Comprobar Apps
         for (int i = 0; i < (int)NUM_APPS; i++) {
             if (PtInRect(&g_apps[i].rect, (POINT){ x, y })) {
                 g_hoveredApp = i;
@@ -698,7 +913,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
         }
 
-        // Comprobar Pestañas
         for (int i = 0; i < g_tabCount; i++) {
             if (PtInRect(&g_tabs[i].rect, (POINT){ x, y })) {
                 g_hoveredTab = i;
@@ -706,7 +920,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
         }
 
-        // Comprobar Marcadores
         if (g_showBookmarksBar) {
             for (int i = 0; i < (int)NUM_BOOKMARKS; i++) {
                 if (PtInRect(&g_bookmarks[i].rect, (POINT){ x, y })) {
@@ -716,7 +929,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
         }
 
-        // Comprobar Botones
         if (PtInRect(&g_rcBack, (POINT){ x, y })) g_hoveredBtn = 1;
         else if (PtInRect(&g_rcFwd, (POINT){ x, y })) g_hoveredBtn = 2;
         else if (PtInRect(&g_rcReload, (POINT){ x, y })) g_hoveredBtn = 3;
@@ -751,28 +963,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
 
-        // 1. Clic en Pestañas
+        // 1. Pestañas
         for (int i = 0; i < g_tabCount; i++) {
-            // Clic en cerrar pestaña 'x'
             if (PtInRect(&g_tabs[i].closeRect, (POINT){ x, y })) {
-                if (g_tabCount > 1) {
-                    for (int j = i; j < g_tabCount - 1; j++) {
-                        g_tabs[j] = g_tabs[j + 1];
-                    }
-                    g_tabCount--;
-                    if (g_activeTabIdx >= g_tabCount) g_activeTabIdx = g_tabCount - 1;
-                    InvalidateRect(hwnd, NULL, FALSE);
-                } else {
-                    // Si queda solo 1 pestaña, restaurar al Home
-                    wcscpy(g_tabs[0].title, L"Waterfox Lite - Home");
-                    wcscpy(g_tabs[0].url, L"about:home");
-                    SetWindowText(g_hEditUrl, L"");
-                    InvalidateRect(hwnd, NULL, FALSE);
-                }
+                CloseTab(hwnd, i);
                 return 0;
             }
 
-            // Clic en pestaña para cambiar
             if (PtInRect(&g_tabs[i].rect, (POINT){ x, y })) {
                 g_activeTabIdx = i;
                 for (int j = 0; j < g_tabCount; j++) g_tabs[j].isActive = (j == i);
@@ -782,81 +979,97 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
         }
 
-        // 2. Clic en botón '+' Nueva Pestaña
+        // 2. Botón '+' Nueva Pestaña
         if (PtInRect(&g_rcNewTab, (POINT){ x, y })) {
-            if (g_tabCount < MAX_TABS) {
-                int newIdx = g_tabCount;
-                swprintf(g_tabs[newIdx].title, 64, L"Nueva Pestaña %d", newIdx + 1);
-                wcscpy(g_tabs[newIdx].url, L"about:home");
-                for (int j = 0; j <= newIdx; j++) g_tabs[j].isActive = (j == newIdx);
-                g_activeTabIdx = newIdx;
-                g_tabCount++;
-                SetWindowText(g_hEditUrl, L"");
+            CreateNewTab(hwnd, L"Nueva Pestaña", L"about:home");
+            return 0;
+        }
+
+        // 3. Botones de Navegación Atrás / Adelante con Historial Real
+        BrowserTab *activeTab = &g_tabs[g_activeTabIdx];
+        if (PtInRect(&g_rcBack, (POINT){ x, y })) {
+            if (activeTab->historyIdx > 0) {
+                activeTab->historyIdx--;
+                const wchar_t *prevUrl = activeTab->history[activeTab->historyIdx];
+                wcsncpy(activeTab->url, prevUrl, 511);
+                SetWindowText(g_hEditUrl, wcscmp(prevUrl, L"about:home") == 0 ? L"" : prevUrl);
+                if (wcscmp(prevUrl, L"about:home") != 0) LaunchUrl(hwnd, prevUrl);
                 InvalidateRect(hwnd, NULL, FALSE);
             }
             return 0;
         }
 
-        // 3. Clic en botón Menú Hamburguesa '⋮'
+        if (PtInRect(&g_rcFwd, (POINT){ x, y })) {
+            if (activeTab->historyIdx + 1 < activeTab->historyCount) {
+                activeTab->historyIdx++;
+                const wchar_t *nextUrl = activeTab->history[activeTab->historyIdx];
+                wcsncpy(activeTab->url, nextUrl, 511);
+                SetWindowText(g_hEditUrl, wcscmp(nextUrl, L"about:home") == 0 ? L"" : nextUrl);
+                if (wcscmp(nextUrl, L"about:home") != 0) LaunchUrl(hwnd, nextUrl);
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            return 0;
+        }
+
+        // 4. Botón Menú Hamburguesa '⋮'
         if (PtInRect(&g_rcMenu, (POINT){ x, y })) {
             ShowMainMenu(hwnd);
             return 0;
         }
 
-        // 4. Clic en botón Game Shield / Booster
+        // 5. Botón Game Shield / Booster
         if (PtInRect(&g_rcShield, (POINT){ x, y })) {
             g_shieldBlocked = !g_shieldBlocked;
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
 
-        // 5. Clic en Estrella de Marcador ⭐
+        // 6. Botón Estrella de Marcador ⭐
         if (PtInRect(&g_rcStar, (POINT){ x, y })) {
             g_isBookmarked = !g_isBookmarked;
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
 
-        // 6. Clic en Botón Home 🏠
+        // 7. Botón Home 🏠
         if (PtInRect(&g_rcHome, (POINT){ x, y })) {
-            wcscpy(g_tabs[g_activeTabIdx].title, L"Waterfox Lite - Home");
-            wcscpy(g_tabs[g_activeTabIdx].url, L"about:home");
+            NavigateTab(g_activeTabIdx, L"Waterfox Lite - Home", L"about:home");
             SetWindowText(g_hEditUrl, L"");
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
 
-        // 7. Clic en Botón Recargar ↻
+        // 8. Botón Recargar ↻
         if (PtInRect(&g_rcReload, (POINT){ x, y })) {
             if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0) {
-                LaunchUrl(g_tabs[g_activeTabIdx].url);
+                LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url);
             } else {
                 InvalidateRect(hwnd, NULL, FALSE);
             }
             return 0;
         }
 
-        // 8. Clic en Apps REA
+        // 9. Clic en Apps REA
         for (int i = 0; i < (int)NUM_APPS; i++) {
             if (PtInRect(&g_apps[i].rect, (POINT){ x, y })) {
-                wcscpy(g_tabs[g_activeTabIdx].title, g_apps[i].name);
-                wcscpy(g_tabs[g_activeTabIdx].url, g_apps[i].url);
+                NavigateTab(g_activeTabIdx, g_apps[i].name, g_apps[i].url);
                 SetWindowText(g_hEditUrl, g_apps[i].url);
-                LaunchUrl(g_apps[i].url);
+                LaunchUrl(hwnd, g_apps[i].url);
                 InvalidateRect(hwnd, NULL, FALSE);
                 return 0;
             }
         }
 
-        // 9. Clic en Barra de Marcadores
+        // 10. Clic en Barra de Marcadores
         if (g_showBookmarksBar) {
             for (int i = 0; i < (int)NUM_BOOKMARKS; i++) {
                 if (PtInRect(&g_bookmarks[i].rect, (POINT){ x, y })) {
-                    if (wcslen(g_bookmarks[i].url) > 0) {
-                        wcscpy(g_tabs[g_activeTabIdx].title, g_bookmarks[i].title);
-                        wcscpy(g_tabs[g_activeTabIdx].url, g_bookmarks[i].url);
+                    if (i == 0) {
+                        ShowBookmarksPopup(hwnd, &g_bookmarks[i].rect);
+                    } else if (wcslen(g_bookmarks[i].url) > 0) {
+                        NavigateTab(g_activeTabIdx, g_bookmarks[i].title, g_bookmarks[i].url);
                         SetWindowText(g_hEditUrl, g_bookmarks[i].url);
-                        LaunchUrl(g_bookmarks[i].url);
+                        LaunchUrl(hwnd, g_bookmarks[i].url);
                         InvalidateRect(hwnd, NULL, FALSE);
                     }
                     return 0;
@@ -871,16 +1084,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int wmId = LOWORD(wParam);
         switch (wmId) {
         case IDM_NEW_TAB:
-            if (g_tabCount < MAX_TABS) {
-                int newIdx = g_tabCount;
-                swprintf(g_tabs[newIdx].title, 64, L"Nueva Pestaña %d", newIdx + 1);
-                wcscpy(g_tabs[newIdx].url, L"about:home");
-                for (int j = 0; j <= newIdx; j++) g_tabs[j].isActive = (j == newIdx);
-                g_activeTabIdx = newIdx;
-                g_tabCount++;
-                SetWindowText(g_hEditUrl, L"");
-                InvalidateRect(hwnd, NULL, FALSE);
-            }
+            CreateNewTab(hwnd, L"Nueva Pestaña", L"about:home");
             break;
 
         case IDM_NEW_WINDOW: {
@@ -891,24 +1095,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         case IDM_PRIVATE_WINDOW:
-            LaunchUrl(L"-private-window https://duckduckgo.com");
+            LaunchUrl(hwnd, L"-private-window https://duckduckgo.com");
             break;
 
         case IDM_BOOKMARKS:
         case IDM_HISTORY:
-            LaunchUrl(L"about:history");
+            LaunchUrl(hwnd, L"about:history");
             break;
 
         case IDM_DOWNLOADS:
-            LaunchUrl(L"about:downloads");
+            LaunchUrl(hwnd, L"about:downloads");
             break;
 
         case IDM_EXTENSIONS:
-            LaunchUrl(L"about:addons");
+            LaunchUrl(hwnd, L"about:addons");
             break;
 
         case IDM_SETTINGS:
-            LaunchUrl(L"about:preferences");
+            LaunchUrl(hwnd, L"about:preferences");
             break;
 
         case IDM_TOGGLE_BOOKMARKS:
@@ -921,11 +1125,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, NULL, FALSE);
             break;
 
+        case IDM_ZOOM_IN:
+        case IDM_ZOOM_OUT:
+        case IDM_ZOOM_RESET:
+            InvalidateRect(hwnd, NULL, FALSE);
+            break;
+
         case IDM_ABOUT:
             MessageBox(hwnd,
                 L"Waterfox Lite - Native Theme (Edición Ultra-Lite en C)\n\n"
                 L"• Diseñado para Intel Pentium G620 & HD Graphics\n"
-                L"• Consumo de memoria en Home: ~2.5 - 3.9 MB RAM\n"
+                L"• Consumo de memoria en Home: ~2.5 - 3.7 MB RAM\n"
                 L"• Motor gráfico GDI 60 FPS con Icon Cache en Disco\n"
                 L"• Barra de marcadores, pestañas múltiples y escudo Web Game Shield",
                 L"Acerca de Waterfox Lite", MB_OK | MB_ICONINFORMATION);
@@ -939,35 +1149,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_KEYDOWN: {
-        // Atajos numéricos 1-6 para Apps REA
         if (wParam >= '1' && wParam <= '6') {
             int idx = wParam - '1';
             if (idx >= 0 && idx < (int)NUM_APPS) {
-                wcscpy(g_tabs[g_activeTabIdx].title, g_apps[idx].name);
-                wcscpy(g_tabs[g_activeTabIdx].url, g_apps[idx].url);
+                NavigateTab(g_activeTabIdx, g_apps[idx].name, g_apps[idx].url);
                 SetWindowText(g_hEditUrl, g_apps[idx].url);
-                LaunchUrl(g_apps[idx].url);
+                LaunchUrl(hwnd, g_apps[idx].url);
                 InvalidateRect(hwnd, NULL, FALSE);
             }
-        }
-        // Atajo Ctrl+T (Nueva pestaña)
-        else if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'T') {
-            SendMessage(hwnd, WM_COMMAND, IDM_NEW_TAB, 0);
-        }
-        // Atajo Ctrl+W (Cerrar pestaña)
-        else if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'W') {
-            if (g_tabCount > 1) {
-                for (int j = g_activeTabIdx; j < g_tabCount - 1; j++) {
-                    g_tabs[j] = g_tabs[j + 1];
-                }
-                g_tabCount--;
-                if (g_activeTabIdx >= g_tabCount) g_activeTabIdx = g_tabCount - 1;
-                InvalidateRect(hwnd, NULL, FALSE);
-            }
-        }
-        // Atajo Ctrl+B o Ctrl+Shift+B (Alternar Marcadores)
-        else if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'B') {
-            SendMessage(hwnd, WM_COMMAND, IDM_TOGGLE_BOOKMARKS, 0);
         }
         return 0;
     }
@@ -976,9 +1165,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         HDC hdcEdit = (HDC)wParam;
         SetTextColor(hdcEdit, COLOR_TEXT);
         SetBkColor(hdcEdit, RGB(13, 17, 23));
-        static HBRUSH hEditBg = NULL;
-        if (!hEditBg) hEditBg = CreateSolidBrush(RGB(13, 17, 23));
-        return (INT_PTR)hEditBg;
+        if (!g_hEditBgBrush) g_hEditBgBrush = CreateSolidBrush(RGB(13, 17, 23));
+        return (INT_PTR)g_hEditBgBrush;
     }
 
     case WM_ERASEBKGND:
@@ -994,10 +1182,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_DESTROY: {
         FreeIconCache();
-        if (g_hFontNormal) DeleteObject(g_hFontNormal);
-        if (g_hFontBold) DeleteObject(g_hFontBold);
-        if (g_hFontTitle) DeleteObject(g_hFontTitle);
-        if (g_hFontSmall) DeleteObject(g_hFontSmall);
+        if (g_hFontNormal) { DeleteObject(g_hFontNormal); g_hFontNormal = NULL; }
+        if (g_hFontBold)   { DeleteObject(g_hFontBold); g_hFontBold = NULL; }
+        if (g_hFontTitle)  { DeleteObject(g_hFontTitle); g_hFontTitle = NULL; }
+        if (g_hFontSmall)  { DeleteObject(g_hFontSmall); g_hFontSmall = NULL; }
+        if (g_hEditBgBrush){ DeleteObject(g_hEditBgBrush); g_hEditBgBrush = NULL; }
         PostQuitMessage(0);
         return 0;
     }
@@ -1010,6 +1199,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // Punto de Entrada Principal (WinMain)
 // ----------------------------------------------------------------------------
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    EnableDpiAwareness();
+
     INITCOMMONCONTROLSEX icex;
     icex.dwSize = sizeof(icex);
     icex.dwICC = ICC_STANDARD_CLASSES;
@@ -1039,7 +1230,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     if (!hwnd) return 1;
 
-    // Modo Captura Headless para Pruebas Automatizadas
     if (strstr(lpCmdLine, "--screenshot") != NULL) {
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
@@ -1057,24 +1247,59 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
-        if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN && GetFocus() == g_hEditUrl) {
-            wchar_t buffer[1024];
-            GetWindowText(g_hEditUrl, buffer, 1024);
-            if (wcslen(buffer) > 0) {
-                wchar_t target[1024];
-                if (wcsstr(buffer, L"://") != NULL) {
-                    wcscpy(target, buffer);
-                } else if (wcschr(buffer, L'.') != NULL && wcschr(buffer, L' ') == NULL) {
-                    swprintf(target, 1024, L"https://%s", buffer);
-                } else {
-                    swprintf(target, 1024, L"https://duckduckgo.com/?q=%s", buffer);
+        // Intercepción global de atajos de teclado (funciona incluso con foco en la barra de URL)
+        if (msg.message == WM_KEYDOWN) {
+            BOOL isCtrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            BOOL isShift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+
+            if (msg.wParam == VK_RETURN && GetFocus() == g_hEditUrl) {
+                wchar_t buffer[1024];
+                GetWindowText(g_hEditUrl, buffer, 1024);
+                if (wcslen(buffer) > 0) {
+                    wchar_t target[1024];
+                    if (wcsstr(buffer, L"://") != NULL) {
+                        wcscpy(target, buffer);
+                    } else if (wcschr(buffer, L'.') != NULL && wcschr(buffer, L' ') == NULL) {
+                        swprintf(target, 1024, L"https://%s", buffer);
+                    } else {
+                        swprintf(target, 1024, L"https://duckduckgo.com/?q=%s", buffer);
+                    }
+                    NavigateTab(g_activeTabIdx, buffer, target);
+                    LaunchUrl(hwnd, target);
+                    InvalidateRect(hwnd, NULL, FALSE);
                 }
-                wcscpy(g_tabs[g_activeTabIdx].title, buffer);
-                wcscpy(g_tabs[g_activeTabIdx].url, target);
-                LaunchUrl(target);
-                InvalidateRect(hwnd, NULL, FALSE);
+                continue;
             }
-            continue;
+
+            if (isCtrl && (msg.wParam == 'T' || msg.wParam == 't')) {
+                SendMessage(hwnd, WM_COMMAND, IDM_NEW_TAB, 0);
+                continue;
+            }
+
+            if (isCtrl && (msg.wParam == 'W' || msg.wParam == 'w')) {
+                CloseTab(hwnd, g_activeTabIdx);
+                continue;
+            }
+
+            if (isCtrl && (msg.wParam == 'N' || msg.wParam == 'n')) {
+                SendMessage(hwnd, WM_COMMAND, IDM_NEW_WINDOW, 0);
+                continue;
+            }
+
+            if (isCtrl && (msg.wParam == 'B' || msg.wParam == 'b')) {
+                SendMessage(hwnd, WM_COMMAND, IDM_TOGGLE_BOOKMARKS, 0);
+                continue;
+            }
+
+            if (isCtrl && (msg.wParam == 'Q' || msg.wParam == 'q')) {
+                SendMessage(hwnd, WM_COMMAND, IDM_EXIT, 0);
+                continue;
+            }
+
+            if (msg.wParam == VK_ESCAPE) {
+                SetFocus(hwnd);
+                continue;
+            }
         }
 
         TranslateMessage(&msg);
