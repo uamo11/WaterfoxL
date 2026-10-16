@@ -142,3 +142,10 @@ user_pref("javascript.options.shared_memory", true);
 user_pref("dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled", true);
 user_pref("dom.min_timeout_value", 1);
 user_pref("privacy.reduceTimerPrecision", false);
+
+// ----------------------------------------------------------------------------
+// 13. DESACTIVAR PROMPTS Y CHEQUEO DE NAVEGADOR PREDETERMINADO
+// ----------------------------------------------------------------------------
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("browser.defaultbrowser.notificationbar", false);
+user_pref("browser.warnOnQuit", false);
