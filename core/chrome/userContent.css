@@ -1,29 +1,22 @@
 /* ==========================================================================
    Waterfox Lite - userContent.css
-   Inyección directa a nivel de motor de renderizado para X y YouTube Music
+   Inyección directa a nivel de motor para X, YouTube y YouTube Music
    ========================================================================== */
 
 @-moz-document domain("x.com"), domain("twitter.com") {
-  /* 1. Eliminar backdrop-filter blur que crashea el compositor en Intel HD Graphics */
   * {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
-
-  /* 2. Reducir animaciones innecesarias */
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-
-  /* 3. content-visibility auto: Evita renderizar tweets fuera de pantalla */
   [data-testid="cellInnerDiv"] {
     content-visibility: auto !important;
     contain-intrinsic-size: 150px !important;
   }
-
-  /* 4. Ocultar tweets patrocinados y rastreadores */
   div[data-testid="placementTracking"],
   article[data-testid="tweet"]:has(svg path[d*="M19.498 3h-15c-1.381"]) {
     display: none !important;
@@ -31,24 +24,39 @@
 }
 
 @-moz-document domain("music.youtube.com") {
-  /* 1. Eliminar filtros blur pesados en la barra de navegación y reproductor */
   ytmusic-nav-bar,
   ytmusic-player-bar,
   ytmusic-player-page {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
-
-  /* 2. Ocultar banners promocionales molestos */
   ytmusic-mealbar-promo-renderer,
   ytmusic-ad-banner-renderer,
   .ytmusic-ad-slot-renderer,
   ytmusic-upsell-dialog-renderer {
     display: none !important;
   }
-
-  /* 3. Reducir el consumo de renderizado del canvas del reproductor */
   #song-video.ytmusic-player {
     contain: strict !important;
+  }
+}
+
+@-moz-document domain("www.youtube.com"), domain("youtube.com") {
+  /* Eliminar backdrop-filter blur en cabecera */
+  #masthead-container, ytd-masthead, .ytp-chrome-bottom {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  /* Ocultar anuncios de Polymer */
+  ytd-action-companion-ad-renderer,
+  ytd-ad-slot-renderer,
+  ytd-banner-promo-renderer,
+  #masthead-ad {
+    display: none !important;
+  }
+  /* content-visibility auto en miniaturas para fluidez en scroll */
+  ytd-rich-item-renderer, ytd-video-renderer {
+    content-visibility: auto !important;
+    contain-intrinsic-size: 250px !important;
   }
 }
