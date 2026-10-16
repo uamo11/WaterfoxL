@@ -148,3 +148,13 @@ user_pref("privacy.reduceTimerPrecision", false);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.defaultbrowser.notificationbar", false);
 user_pref("browser.warnOnQuit", false);
+
+// ----------------------------------------------------------------------------
+// 14. MOTOR DE BÚSQUEDA PREDETERMINADO: GOOGLE & ESTABILIDAD DE NAVEGACIÓN
+// ----------------------------------------------------------------------------
+user_pref("browser.search.defaultenginename", "Google");
+user_pref("browser.search.order.1", "Google");
+user_pref("browser.urlbar.placeholderName", "Google");
+user_pref("keyword.enabled", true);
+user_pref("browser.link.open_newwindow", 1);
+user_pref("browser.link.open_newwindow.restriction", 0);

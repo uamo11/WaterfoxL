@@ -8,6 +8,7 @@
 #include <psapi.h>
 #include <shellapi.h>
 #include <dwmapi.h>
+#include <tlhelp32.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -344,7 +345,59 @@ static void FreeIconCache() {
 }
 
 // ----------------------------------------------------------------------------
-// Localizador Inteligente de Waterfox Lite
+// Codificación de Búsqueda URL (Google Search)
+// ----------------------------------------------------------------------------
+static void UrlEncodeSearchQuery(const wchar_t *query, wchar_t *outEncoded, size_t maxLen) {
+    if (!query || !outEncoded || maxLen == 0) return;
+    size_t j = 0;
+    for (size_t i = 0; query[i] != L'\0' && j + 4 < maxLen; i++) {
+        wchar_t ch = query[i];
+        if (ch == L' ') {
+            outEncoded[j++] = L'+';
+        } else if (ch == L'&') {
+            outEncoded[j++] = L'%'; outEncoded[j++] = L'2'; outEncoded[j++] = L'6';
+        } else if (ch == L'#') {
+            outEncoded[j++] = L'%'; outEncoded[j++] = L'2'; outEncoded[j++] = L'3';
+        } else if (ch == L'?') {
+            outEncoded[j++] = L'%'; outEncoded[j++] = L'3'; outEncoded[j++] = L'F';
+        } else if (ch == L'=') {
+            outEncoded[j++] = L'%'; outEncoded[j++] = L'3'; outEncoded[j++] = L'D';
+        } else if (ch == L'%') {
+            outEncoded[j++] = L'%'; outEncoded[j++] = L'2'; outEncoded[j++] = L'5';
+        } else if (ch == L'+') {
+            outEncoded[j++] = L'%'; outEncoded[j++] = L'2'; outEncoded[j++] = L'B';
+        } else {
+            outEncoded[j++] = ch;
+        }
+    }
+    outEncoded[j] = L'\0';
+}
+
+// ----------------------------------------------------------------------------
+// Limpieza de Procesos Huérfanos de Waterfox
+// ----------------------------------------------------------------------------
+static void TerminateOrphanedGeckoProcesses() {
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe;
+        pe.dwSize = sizeof(pe);
+        if (Process32FirstW(hSnap, &pe)) {
+            do {
+                if (_wcsicmp(pe.szExeFile, L"waterfox.exe") == 0) {
+                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+                    if (hProc) {
+                        TerminateProcess(hProc, 0);
+                        CloseHandle(hProc);
+                    }
+                }
+            } while (Process32NextW(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Localizador Inteligente de Waterfox Lite con Rutas Canónicas
 // ----------------------------------------------------------------------------
 static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, DWORD maxProf) {
     wchar_t exePath[MAX_PATH];
@@ -353,18 +406,18 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
     if (lastSlash) *lastSlash = L'\0';
 
     const wchar_t *candidatesBin[] = {
+        L"%ls\\app\\core\\waterfox.exe",
         L"%ls\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
         L"%ls\\..\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
-        L"%ls\\app\\core\\waterfox.exe",
         L"%ls\\app\\waterfox.exe",
         L"%ls\\core\\waterfox.exe",
         L"%ls\\waterfox.exe"
     };
 
     const wchar_t *candidatesProf[] = {
+        L"%ls\\profile",
         L"%ls\\WaterfoxLite_Portable\\profile",
         L"%ls\\..\\WaterfoxLite_Portable\\profile",
-        L"%ls\\profile",
         L"%ls\\profile",
         L"%ls\\profile",
         L"%ls\\profile"
@@ -374,8 +427,10 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
         wchar_t testBin[MAX_PATH];
         swprintf(testBin, MAX_PATH, candidatesBin[i], exePath);
         if (GetFileAttributes(testBin) != INVALID_FILE_ATTRIBUTES) {
-            wcsncpy(outBin, testBin, maxBin);
-            swprintf(outProf, maxProf, candidatesProf[i], exePath);
+            wchar_t testProf[MAX_PATH];
+            swprintf(testProf, MAX_PATH, candidatesProf[i], exePath);
+            GetFullPathNameW(testBin, maxBin, outBin, NULL);
+            GetFullPathNameW(testProf, maxProf, outProf, NULL);
             return TRUE;
         }
     }
@@ -385,8 +440,10 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
     wchar_t curBin[MAX_PATH];
     swprintf(curBin, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\app\\core\\waterfox.exe", curDir);
     if (GetFileAttributes(curBin) != INVALID_FILE_ATTRIBUTES) {
-        wcsncpy(outBin, curBin, maxBin);
-        swprintf(outProf, maxProf, L"%ls\\WaterfoxLite_Portable\\profile", curDir);
+        wchar_t curProf[MAX_PATH];
+        swprintf(curProf, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\profile", curDir);
+        GetFullPathNameW(curBin, maxBin, outBin, NULL);
+        GetFullPathNameW(curProf, maxProf, outProf, NULL);
         return TRUE;
     }
 
@@ -456,6 +513,11 @@ static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
     style |= WS_CHILD | WS_CLIPSIBLINGS;
     SetWindowLongPtr(hwndGecko, GWL_STYLE, style);
     SetParent(hwndGecko, hwndParent);
+
+    DWORD geckoThreadId = GetWindowThreadProcessId(hwndGecko, NULL);
+    if (geckoThreadId != 0 && geckoThreadId != GetCurrentThreadId()) {
+        AttachThreadInput(GetCurrentThreadId(), geckoThreadId, TRUE);
+    }
 
     RECT rc;
     GetClientRect(hwndParent, &rc);
@@ -530,7 +592,9 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
             ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
             SetFocus(g_hGeckoWnd);
         } else {
-            // Eliminar parent.lock huérfano si no hay proceso activo
+            // Eliminar procesos huérfanos y parent.lock antes de lanzar
+            TerminateOrphanedGeckoProcesses();
+            Sleep(50);
             DeleteFile(lockPath);
             g_hGeckoWnd = NULL;
             g_isGeckoDocking = TRUE;
@@ -1254,7 +1318,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             hwnd, (HMENU)1001, GetModuleHandle(NULL), NULL
         );
         SendMessage(g_hEditUrl, WM_SETFONT, (WPARAM)g_hFontNormal, TRUE);
-        SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar en la web o presiona 1-7 para abrir apps y juegos...");
+        SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar con Google o presiona 1-7 para abrir apps y juegos...");
 
         g_hWndMain = hwnd;
         BOOL dark = TRUE;
@@ -1653,7 +1717,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         case IDM_PRIVATE_WINDOW:
-            LaunchUrl(hwnd, L"-private-window https://duckduckgo.com");
+            LaunchUrl(hwnd, L"-private-window https://www.google.com");
             break;
 
         case IDM_BOOKMARKS:
@@ -1755,7 +1819,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         KillTimer(hwnd, TIMER_MEM_TRIM);
         KillTimer(hwnd, TIMER_DOCK_GECKO);
         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
-            SendMessage(g_hGeckoWnd, WM_CLOSE, 0, 0);
+            DWORD geckoThreadId = GetWindowThreadProcessId(g_hGeckoWnd, NULL);
+            PostMessage(g_hGeckoWnd, WM_CLOSE, 0, 0);
+            if (geckoThreadId != 0 && geckoThreadId != GetCurrentThreadId()) {
+                AttachThreadInput(GetCurrentThreadId(), geckoThreadId, FALSE);
+            }
             g_hGeckoWnd = NULL;
         }
         FreeIconCache();
@@ -1874,7 +1942,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             BOOL isCtrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             BOOL isShift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
 
-            if (msg.wParam == VK_RETURN && GetFocus() == g_hEditUrl) {
+            if (msg.wParam == VK_RETURN && (msg.hwnd == g_hEditUrl || GetFocus() == g_hEditUrl)) {
                 wchar_t buffer[1024];
                 GetWindowText(g_hEditUrl, buffer, 1024);
                 wchar_t *p = buffer;
@@ -1891,7 +1959,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                     } else if (wcschr(p, L'.') != NULL && wcschr(p, L' ') == NULL) {
                         swprintf(target, 1024, L"https://%ls", p);
                     } else {
-                        swprintf(target, 1024, L"https://duckduckgo.com/?q=%ls", p);
+                        wchar_t encoded[1024];
+                        UrlEncodeSearchQuery(p, encoded, 1024);
+                        swprintf(target, 1024, L"https://www.google.com/search?q=%ls", encoded);
                     }
                     NavigateTab(g_activeTabIdx, p, target);
                     LaunchUrl(hwnd, target);
