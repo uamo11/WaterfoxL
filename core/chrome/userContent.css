@@ -105,3 +105,13 @@
     image-rendering: pixelated !important;
   }
 }
+
+/* 7. fiveplay.lol - Supresión de Publicidad, Popunders y Mineros */
+@-moz-document domain("fiveplay.lol") {
+  iframe[src*="quge5"],
+  iframe[src*="alwingulla"],
+  iframe[src*="monetag"],
+  div[data-zone] {
+    display: none !important;
+  }
+}

@@ -127,3 +127,14 @@ user_pref("browser.startup.homepage", "file:///C:/Users/Usuario/Documents/REA/Wa
 user_pref("browser.startup.page", 1);
 user_pref("browser.newtabpage.enabled", true);
 user_pref("browser.newtab.url", "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html");
+
+// ----------------------------------------------------------------------------
+// 12. SOPORTE WEBGPU & SHAREDARRAYBUFFER (FIVEPLAY / GTA V WEB)
+// ----------------------------------------------------------------------------
+user_pref("dom.webgpu.enabled", true);
+user_pref("dom.webgpu.workers.enabled", true);
+user_pref("gfx.webgpu.force-enabled", true);
+user_pref("javascript.options.shared_memory", true);
+user_pref("dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled", true);
+user_pref("dom.min_timeout_value", 1);
+user_pref("privacy.reduceTimerPrecision", false);
