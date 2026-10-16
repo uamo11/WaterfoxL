@@ -381,9 +381,25 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
     wchar_t binPath[MAX_PATH];
     wchar_t profPath[MAX_PATH];
     if (FindWaterfoxBinary(binPath, MAX_PATH, profPath, MAX_PATH)) {
+        // Eliminar parent.lock huérfano si no hay proceso activo
+        wchar_t lockPath[MAX_PATH];
+        swprintf(lockPath, MAX_PATH, L"%s\\parent.lock", profPath);
+        DeleteFile(lockPath);
+
+        // Directorio de trabajo del ejecutable Waterfox
+        wchar_t binDir[MAX_PATH];
+        wcsncpy(binDir, binPath, MAX_PATH);
+        wchar_t *lastSlash = wcsrchr(binDir, L'\\');
+        if (lastSlash) *lastSlash = L'\0';
+
+        // Lanzar con -profile sin -no-remote para permitir abrir pestañas fluidamente
         wchar_t args[1024];
-        swprintf(args, 1024, L"-profile \"%s\" -no-remote \"%s\"", profPath, url);
-        ShellExecute(NULL, L"open", binPath, args, NULL, SW_SHOWNORMAL);
+        if (wcsncmp(url, L"-private-window ", 16) == 0) {
+            swprintf(args, 1024, L"-profile \"%s\" -private-window \"%s\"", profPath, url + 16);
+        } else {
+            swprintf(args, 1024, L"-profile \"%s\" \"%s\"", profPath, url);
+        }
+        ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
     } else {
         ShellExecute(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL);
     }
@@ -1407,16 +1423,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             if (msg.wParam == VK_RETURN && GetFocus() == g_hEditUrl) {
                 wchar_t buffer[1024];
                 GetWindowText(g_hEditUrl, buffer, 1024);
-                if (wcslen(buffer) > 0) {
+                wchar_t *p = buffer;
+                while (*p == L' ' || *p == L'\t') p++;
+                size_t len = wcslen(p);
+                while (len > 0 && (p[len - 1] == L' ' || p[len - 1] == L'\t')) {
+                    p[len - 1] = L'\0';
+                    len--;
+                }
+                if (len > 0) {
                     wchar_t target[1024];
-                    if (wcsstr(buffer, L"://") != NULL) {
-                        wcscpy(target, buffer);
-                    } else if (wcschr(buffer, L'.') != NULL && wcschr(buffer, L' ') == NULL) {
-                        swprintf(target, 1024, L"https://%s", buffer);
+                    if (wcsstr(p, L"://") != NULL || wcsncmp(p, L"about:", 6) == 0) {
+                        wcscpy(target, p);
+                    } else if (wcschr(p, L'.') != NULL && wcschr(p, L' ') == NULL) {
+                        swprintf(target, 1024, L"https://%s", p);
                     } else {
-                        swprintf(target, 1024, L"https://duckduckgo.com/?q=%s", buffer);
+                        swprintf(target, 1024, L"https://duckduckgo.com/?q=%s", p);
                     }
-                    NavigateTab(g_activeTabIdx, buffer, target);
+                    NavigateTab(g_activeTabIdx, p, target);
                     LaunchUrl(hwnd, target);
                     InvalidateRect(hwnd, NULL, FALSE);
                 }

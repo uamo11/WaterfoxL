@@ -11,15 +11,20 @@ user_pref("gfx.webrender.software", true);
 user_pref("gfx.webrender.software.opengl", false);
 user_pref("gfx.canvas.accelerated", false);
 user_pref("layers.acceleration.disabled", true);
+user_pref("layers.gpu-process.enabled", false);
+user_pref("layers.gpu-process.force-enabled", false);
 user_pref("gfx.direct2d.disabled", true);
 user_pref("dom.webgpu.enabled", false);
 user_pref("webgl.disabled", false);
 user_pref("webgl.force-enabled", false);
 user_pref("webgl.msaa-force", false);
 user_pref("webgl.max-contexts-per-principal", 8);
+user_pref("webgl.out-of-process", false);
 user_pref("javascript.options.wasm_simd", true);
 user_pref("layout.css.backdrop-filter.enabled", true);
 user_pref("widget.windows.window_occlusion_tracking.enabled", false);
+user_pref("browser.sessionstore.resume_from_crash", false);
+user_pref("browser.sessionstore.max_resumed_crashes", 0);
 
 // ----------------------------------------------------------------------------
 // 2. SOLUCIÓN AL LAGG EN YOUTUBE MUSIC Y VIDEOS (FORZAR H.264 / EVITAR VP9/AV1)
@@ -40,7 +45,6 @@ user_pref("media.autoplay.default", 0);
 // ----------------------------------------------------------------------------
 // 3. AISLAMIENTO Y ESTABILIDAD DE PROCESOS GRÁFICOS (PREVENCIÓN DE CRASHES)
 // ----------------------------------------------------------------------------
-user_pref("webgl.out-of-process", true);
 user_pref("dom.ipc.processHangMonitor", true);
 user_pref("dom.ipc.processHangTimeoutSecs", 15);
 user_pref("dom.ipc.reportProcessHangs", false);
@@ -129,11 +133,11 @@ user_pref("browser.newtabpage.enabled", true);
 user_pref("browser.newtab.url", "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html");
 
 // ----------------------------------------------------------------------------
-// 12. SOPORTE WEBGPU & SHAREDARRAYBUFFER (FIVEPLAY / GTA V WEB)
+// 12. SOPORTE DE MEMORIA COMPARTIDA (FIVEPLAY / GTA V WEB)
 // ----------------------------------------------------------------------------
-user_pref("dom.webgpu.enabled", true);
-user_pref("dom.webgpu.workers.enabled", true);
-user_pref("gfx.webgpu.force-enabled", true);
+user_pref("dom.webgpu.enabled", false);
+user_pref("dom.webgpu.workers.enabled", false);
+user_pref("gfx.webgpu.force-enabled", false);
 user_pref("javascript.options.shared_memory", true);
 user_pref("dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled", true);
 user_pref("dom.min_timeout_value", 1);
