@@ -65,6 +65,11 @@ jobs:
               DisablePocket = $true
               OverrideFirstRunPage = ""
               OverridePostUpdatePage = ""
+              Homepage = @{
+                URL = "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html"
+                Locked = $false
+                StartPage = "homepage"
+              }
               Preferences = @{
                 "gfx.webrender.all" = $false
                 "gfx.webrender.software" = $true
@@ -74,6 +79,8 @@ jobs:
                 "media.av1.enabled" = $false
                 "dom.ipc.processCount" = 2
                 "toolkit.legacyUserProfileCustomizations.stylesheets" = $true
+                "browser.startup.homepage" = "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html"
+                "browser.newtab.url" = "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html"
               }
             }
           } | ConvertTo-Json -Depth 5
@@ -85,6 +92,7 @@ jobs:
           New-Item -ItemType Directory -Path $chromeDir -Force
           Copy-Item -Path "core\prefs\user.js" -Destination "$profileDir\user.js" -Force
           Copy-Item -Path "core\chrome\*" -Destination $chromeDir -Force -Recurse
+          Copy-Item -Path "core\pages\*" -Destination $profileDir -Force -Recurse
 
           # 4. Inject xapp and ytm debloat scripts
           $modulesDir = "WaterfoxLite_Dist\modules"

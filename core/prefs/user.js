@@ -6,9 +6,6 @@
 // ----------------------------------------------------------------------------
 // 1. SOLUCIÓN AL PROBLEMA DE PANTALLA EN NEGRO EN X (TWITTER) Y WEBGPU/CANVAS
 // ----------------------------------------------------------------------------
-// En GPUs Intel HD Graphics de 2ª generación (Sandy Bridge), el hardware
-// WebRender y DirectComposition causan fallos de contexto y pantallas negras.
-// La solución definitiva es Software WebRender (rápido, estable y sin cuelgues).
 user_pref("gfx.webrender.all", false);
 user_pref("gfx.webrender.software", true);
 user_pref("gfx.webrender.software.opengl", false);
@@ -24,9 +21,6 @@ user_pref("widget.windows.window_occlusion_tracking.enabled", false);
 // ----------------------------------------------------------------------------
 // 2. SOLUCIÓN AL LAGG EN YOUTUBE MUSIC Y VIDEOS (FORZAR H.264 / EVITAR VP9/AV1)
 // ----------------------------------------------------------------------------
-// Los procesadores Pentium G620 / viejos NO tienen decodificación por hardware
-// de VP9 ni AV1. Forzar su decodificación por software satura los 2 núcleos al 100%.
-// Al desactivar VP9 y AV1, YouTube envía H.264 (acelerado por Intel QuickSync) o audio directo.
 user_pref("media.mediasource.vp9.enabled", false);
 user_pref("media.av1.enabled", false);
 user_pref("media.hardware-video-decoding.enabled", true);
@@ -41,8 +35,6 @@ user_pref("media.autoplay.default", 0);
 // ----------------------------------------------------------------------------
 // 3. OPTIMIZACIÓN MULTIPROCESO PARA DUAL-CORE (PENTIUM G620: 2 NÚCLEOS / 2 HILOS)
 // ----------------------------------------------------------------------------
-// Por defecto, Waterfox/Firefox lanza 8-10 procesos de contenido, saturando la
-// cola del planificador de la CPU. Reducir a 2 procesos balancea memoria y CPU.
 user_pref("dom.ipc.processCount", 2);
 user_pref("dom.ipc.processCount.webIsolated", 1);
 user_pref("dom.ipc.keepProcessesAlive.web", 1);
@@ -51,7 +43,6 @@ user_pref("dom.ipc.processPrelaunch.enabled", false);
 // ----------------------------------------------------------------------------
 // 4. GESTIÓN AGRESIVA DE MEMORIA RAM
 // ----------------------------------------------------------------------------
-// Evita fugas de memoria y descarga pestañas en segundo plano cuando la RAM escasea.
 user_pref("browser.tabs.unloadOnLowMemory", true);
 user_pref("browser.cache.memory.enable", true);
 user_pref("browser.cache.memory.capacity", 65536); // Máximo 64 MB de caché en RAM
@@ -79,3 +70,11 @@ user_pref("browser.ping-centre.telemetry", false);
 // 6. HABILITAR SOPORTE PARA userChrome.css Y userContent.css
 // ----------------------------------------------------------------------------
 user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
+
+// ----------------------------------------------------------------------------
+// 7. PÁGINA DE INICIO Y NUEVA VENTANA/PESTAÑA CON ACCESO DIRECTO A APPS REA
+// ----------------------------------------------------------------------------
+user_pref("browser.startup.homepage", "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html");
+user_pref("browser.startup.page", 1);
+user_pref("browser.newtabpage.enabled", true);
+user_pref("browser.newtab.url", "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html");

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Waterfox Lite - Nueva Pestaña</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --card-hover: #21262d;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --text: #f0f6fc;
+      --text-muted: #8b949e;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      width: 100%;
+      max-width: 820px;
+      text-align: center;
+    }
+    .header {
+      margin-bottom: 25px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .brand svg {
+      width: 38px;
+      height: 38px;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .tagline {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(88, 166, 255, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(88, 166, 255, 0.25);
+      margin-top: 6px;
+    }
+    .search-box {
+      margin: 20px auto 30px auto;
+      max-width: 580px;
+      position: relative;
+    }
+    .search-input {
+      width: 100%;
+      padding: 13px 20px 13px 44px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      color: #fff;
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .search-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+    }
+    .search-icon {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      width: 18px;
+      height: 18px;
+    }
+    .apps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 18px;
+      margin-bottom: 30px;
+    }
+    .app-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 12px 16px 12px;
+      text-decoration: none;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      transition: background 0.15s, transform 0.15s, border-color 0.15s;
+      position: relative;
+    }
+    .app-card:hover {
+      background: var(--card-hover);
+      border-color: var(--accent);
+      transform: translateY(-3px);
+    }
+    .app-icon {
+      width: 50px;
+      height: 50px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    .app-name {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .app-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .key-badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      font-size: 10px;
+      padding: 1px 5px;
+      font-weight: 700;
+    }
+    /* App Icon Specific Colors */
+    .icon-x { background: #000; color: #fff; }
+    .icon-ytm { background: #ff0000; color: #fff; }
+    .icon-yt { background: #ff0000; color: #fff; }
+    .icon-fb { background: #1877f2; color: #fff; }
+    .icon-gemini { background: linear-gradient(135deg, #1ba1e2, #9b51e0); color: #fff; }
+    
+    footer {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+    }
+    footer span { display: flex; align-items: center; gap: 4px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand">
+        <!-- Waterfox Logo SVG -->
+        <svg viewBox="0 0 48 48" fill="none">
+          <circle cx="24" cy="24" r="22" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
+          <path d="M12 28C16 36 28 36 34 26C31 28 26 29 23 27C19 25 18 19 22 14C17 18 14 23 12 28Z" fill="#58a6ff"/>
+          <path d="M26 15C31 18 36 24 34 30C37 25 36 19 32 15C29 12 25 10 21 8C23 10 25 13 26 15Z" fill="#1f6feb"/>
+        </svg>
+        <h1>Waterfox Lite</h1>
+      </div>
+      <div class="tagline">Panel de Inicio Rápido & Apps REA</div>
+      <span class="badge">⚡ Intel Pentium G620 & HD Graphics Habilitado</span>
+    </div>
+
+    <!-- Search bar -->
+    <div class="search-box">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <input type="text" class="search-input" id="search" placeholder="Buscar en la web o presiona 1-5 para abrir apps..." autofocus autocomplete="off">
+    </div>
+
+    <!-- Apps Grid -->
+    <div class="apps-grid">
+      <!-- 1. X (Twitter) -->
+      <a href="https://x.com" class="app-card" data-key="1">
+        <span class="key-badge">1</span>
+        <div class="app-icon icon-x">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+          </svg>
+        </div>
+        <div class="app-name">𝕏 (Twitter)</div>
+        <div class="app-desc">Sin pantalla negra</div>
+      </a>
+
+      <!-- 2. YouTube Music -->
+      <a href="https://music.youtube.com" class="app-card" data-key="2">
+        <span class="key-badge">2</span>
+        <div class="app-icon icon-ytm">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+          </svg>
+        </div>
+        <div class="app-name">YT Music</div>
+        <div class="app-desc">Sin lagg / 0% CPU</div>
+      </a>
+
+      <!-- 3. YouTube Principal -->
+      <a href="https://www.youtube.com" class="app-card" data-key="3">
+        <span class="key-badge">3</span>
+        <div class="app-icon icon-yt">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+          </svg>
+        </div>
+        <div class="app-name">YouTube</div>
+        <div class="app-desc">H.264 por GPU</div>
+      </a>
+
+      <!-- 4. Facebook -->
+      <a href="https://web.facebook.com" class="app-card" data-key="4">
+        <span class="key-badge">4</span>
+        <div class="app-icon icon-fb">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+          </svg>
+        </div>
+        <div class="app-name">Facebook</div>
+        <div class="app-desc">Sin biometría / Ligero</div>
+      </a>
+
+      <!-- 5. Google Gemini -->
+      <a href="https://gemini.google.com" class="app-card" data-key="5">
+        <span class="key-badge">5</span>
+        <div class="app-icon icon-gemini">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2a1 1 0 0 1 .993.883L13 3v2.07l2.5-1.443a1 1 0 0 1 1.488.948l-.01.12-1.071 2.857 2.857-1.071a1 1 0 0 1 1.353 1.182l-.048.118L18.93 11H21a1 1 0 0 1 .993.883L22 12a1 1 0 0 1-.883.993L21 13h-2.07l1.443 2.5a1 1 0 0 1-.948 1.488l-.12-.01-2.857-1.071 1.071 2.857a1 1 0 0 1-1.182 1.353l-.118-.048L15 18.93V21a1 1 0 0 1-.883.993L14 22a1 1 0 0 1-.993-.883L13 21v-2.07l-2.5 1.443a1 1 0 0 1-1.488-.948l.01-.12 1.071-2.857-2.857 1.071a1 1 0 0 1-1.353-1.182l.048-.118L5.07 13H3a1 1 0 0 1-.993-.883L2 12a1 1 0 0 1 .883-.993L3 11h2.07L3.627 8.5a1 1 0 0 1 .948-1.488l.12.01 2.857 1.071-1.071-2.857a1 1 0 0 1 1.182-1.353l.118.048L9 5.07V3a1 1 0 0 1 .883-.993L10 2z"/>
+          </svg>
+        </div>
+        <div class="app-name">Gemini</div>
+        <div class="app-desc">Streaming acelerado</div>
+      </a>
+    </div>
+
+    <footer>
+      <span>🛡️ Motores REA Integrados</span>
+      <span>•</span>
+      <span>🚀 Memoria RAM & CPU Protegidas</span>
+      <span>•</span>
+      <span>⚡ Waterfox Lite</span>
+    </footer>
+  </div>
+
+  <script>
+    // Atajos de teclado rápidos (1-5) cuando no se está escribiendo en el buscador
+    const searchInput = document.getElementById('search');
+    const keyMap = {
+      '1': 'https://x.com',
+      '2': 'https://music.youtube.com',
+      '3': 'https://www.youtube.com',
+      '4': 'https://web.facebook.com',
+      '5': 'https://gemini.google.com'
+    };
+
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement === searchInput) {
+        if (e.key === 'Enter') {
+          const q = searchInput.value.trim();
+          if (q) {
+            if (q.startsWith('http://') || q.startsWith('https://')) {
+              window.location.href = q;
+            } else if (q.includes('.') && !q.includes(' ')) {
+              window.location.href = 'https://' + q;
+            } else {
+              window.location.href = 'https://duckduckgo.com/?q=' + encodeURIComponent(q);
+            }
+          }
+        }
+        return;
+      }
+
+      if (keyMap[e.key]) {
+        window.location.href = keyMap[e.key];
+      }
+    });
+  </script>
+</body>
+</html>
