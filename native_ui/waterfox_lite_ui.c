@@ -272,6 +272,60 @@ static double GetProcessRAM_MB() {
     return 0.0;
 }
 
+static BOOL g_isFullscreen = FALSE;
+static WINDOWPLACEMENT g_wpPrev = { sizeof(WINDOWPLACEMENT) };
+
+static void ToggleFullscreen(HWND hwnd) {
+    DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
+    if (!g_isFullscreen) {
+        MONITORINFO mi = { sizeof(mi) };
+        if (GetWindowPlacement(hwnd, &g_wpPrev) &&
+            GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            SetWindowLong(hwnd, GWL_STYLE, dwStyle & ~WS_THICKFRAME);
+            SetWindowPos(hwnd, HWND_TOP,
+                         mi.rcMonitor.left, mi.rcMonitor.top,
+                         mi.rcMonitor.right - mi.rcMonitor.left,
+                         mi.rcMonitor.bottom - mi.rcMonitor.top,
+                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+            g_isFullscreen = TRUE;
+        }
+    } else {
+        SetWindowLong(hwnd, GWL_STYLE, dwStyle | WS_THICKFRAME);
+        SetWindowPlacement(hwnd, &g_wpPrev);
+        SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_isFullscreen = FALSE;
+    }
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    int topY = g_showBookmarksBar ? 114 : 84;
+    int childH = rc.bottom - topY;
+    if (childH < 0) childH = 0;
+    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+        SetWindowPos(g_hGeckoWnd, NULL, 0, topY, rc.right, childH, SWP_NOZORDER);
+    }
+    InvalidateRect(hwnd, NULL, FALSE);
+}
+
+static void SendZoomToGecko(WPARAM key) {
+    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+        SetFocus(g_hGeckoWnd);
+        INPUT inputs[4] = { 0 };
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].ki.wVk = VK_CONTROL;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].ki.wVk = (WORD)key;
+        inputs[2].type = INPUT_KEYBOARD;
+        inputs[2].ki.wVk = (WORD)key;
+        inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs[3].type = INPUT_KEYBOARD;
+        inputs[3].ki.wVk = VK_CONTROL;
+        inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(4, inputs, sizeof(INPUT));
+    }
+}
+
 // ----------------------------------------------------------------------------
 // DPI Awareness compatible con Windows 7, 8.1, 10, 11
 // ----------------------------------------------------------------------------
@@ -2198,9 +2252,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
 
         case IDM_ZOOM_IN:
+            SendZoomToGecko(VK_OEM_PLUS);
+            break;
+
         case IDM_ZOOM_OUT:
+            SendZoomToGecko(VK_OEM_MINUS);
+            break;
+
         case IDM_ZOOM_RESET:
-            InvalidateRect(hwnd, NULL, FALSE);
+            SendZoomToGecko('0');
             break;
 
         case IDM_ABOUT:
@@ -2508,6 +2568,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             if (isCtrl && (msg.wParam == 'Q' || msg.wParam == 'q')) {
                 SendMessage(hwnd, WM_COMMAND, IDM_EXIT, 0);
+                continue;
+            }
+
+            if (isCtrl && (msg.wParam == VK_OEM_PLUS || msg.wParam == VK_ADD || msg.wParam == '=')) {
+                SendMessage(hwnd, WM_COMMAND, IDM_ZOOM_IN, 0);
+                continue;
+            }
+
+            if (isCtrl && (msg.wParam == VK_OEM_MINUS || msg.wParam == VK_SUBTRACT || msg.wParam == '-')) {
+                SendMessage(hwnd, WM_COMMAND, IDM_ZOOM_OUT, 0);
+                continue;
+            }
+
+            if (isCtrl && msg.wParam == '0') {
+                SendMessage(hwnd, WM_COMMAND, IDM_ZOOM_RESET, 0);
+                continue;
+            }
+
+            if (msg.wParam == VK_F11) {
+                ToggleFullscreen(hwnd);
                 continue;
             }
 
