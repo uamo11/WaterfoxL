@@ -62,6 +62,19 @@
 
 #define ID_GAME_START        4000
 
+// Identificadores de Recursos Embebidos (.rc)
+#define IDI_APPICON       101
+#define IDB_X             201
+#define IDB_YTM           202
+#define IDB_YT            203
+#define IDB_FB            204
+#define IDB_GEMINI        205
+#define IDB_GTA           206
+#define IDB_GAMEPAD       207
+#define IDB_WF            208
+#define IDB_FOLDER        209
+#define IDB_GAME_FOLDER   210
+
 // Estructura de Pestaña con Historial Real
 #define MAX_TABS 12
 #define MAX_HISTORY 16
@@ -83,19 +96,20 @@ typedef struct {
     const wchar_t *desc;
     const wchar_t *url;
     const wchar_t *bmpName;
+    int resId;
     COLORREF fallbackColor;
     RECT rect;
     HBITMAP hCachedBmp;
 } AppCard;
 
 static AppCard g_apps[] = {
-    { L"1", L"X (Twitter)", L"Sin pantalla negra", L"https://x.com", L"x.bmp", RGB(0, 0, 0) },
-    { L"2", L"YT Music", L"Sin lagg / 0% CPU", L"https://music.youtube.com", L"ytm.bmp", RGB(220, 30, 30) },
-    { L"3", L"YouTube", L"H.264 por GPU", L"https://www.youtube.com", L"yt.bmp", RGB(200, 20, 20) },
-    { L"4", L"Facebook", L"Sin biometría / Ligero", L"https://web.facebook.com", L"fb.bmp", RGB(24, 119, 242) },
-    { L"5", L"Gemini", L"Streaming acelerado", L"https://gemini.google.com", L"gemini.bmp", RGB(155, 81, 224) },
-    { L"6", L"GTA V Web", L"360p / 30FPS Low", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0", L"gta.bmp", RGB(46, 125, 50) },
-    { L"7", L"Juegos Web", L"Carpeta de 24 Juegos", L"action:games_folder", L"gamepad.bmp", RGB(155, 81, 224) }
+    { L"1", L"X (Twitter)", L"Sin pantalla negra", L"https://x.com", L"x.bmp", IDB_X, RGB(0, 0, 0), {0}, NULL },
+    { L"2", L"YT Music", L"Sin lagg / 0% CPU", L"https://music.youtube.com", L"ytm.bmp", IDB_YTM, RGB(220, 30, 30), {0}, NULL },
+    { L"3", L"YouTube", L"H.264 por GPU", L"https://www.youtube.com", L"yt.bmp", IDB_YT, RGB(200, 20, 20), {0}, NULL },
+    { L"4", L"Facebook", L"Sin biometría / Ligero", L"https://web.facebook.com", L"fb.bmp", IDB_FB, RGB(24, 119, 242), {0}, NULL },
+    { L"5", L"Gemini", L"Streaming acelerado", L"https://gemini.google.com", L"gemini.bmp", IDB_GEMINI, RGB(155, 81, 224), {0}, NULL },
+    { L"6", L"GTA V Web", L"360p / 30FPS Low", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0", L"gta.bmp", IDB_GTA, RGB(46, 125, 50), {0}, NULL },
+    { L"7", L"Juegos Web", L"Carpeta de 24 Juegos", L"action:games_folder", L"gamepad.bmp", IDB_GAMEPAD, RGB(155, 81, 224), {0}, NULL }
 };
 #define NUM_APPS (sizeof(g_apps) / sizeof(g_apps[0]))
 
@@ -151,21 +165,25 @@ static WebGameItem g_gamesShooters[] = {
 #define NUM_GAMES_SHOOTERS (sizeof(g_gamesShooters) / sizeof(g_gamesShooters[0]))
 
 // Marcadores Rápidos para la barra de marcadores
+// Marcadores Rápidos para la barra de marcadores
 typedef struct {
     const wchar_t *title;
     const wchar_t *url;
+    const wchar_t *bmpName;
+    int resId;
+    HBITMAP hIcon;
     RECT rect;
 } BookmarkItem;
 
 static BookmarkItem g_bookmarks[] = {
-    { L"📁 Marcadores", L"action:bookmarks" },
-    { L"🎮 Carpeta de Juegos ▾", L"action:games_folder" },
-    { L"𝕏 X", L"https://x.com" },
-    { L"🎵 YT Music", L"https://music.youtube.com" },
-    { L"🎬 YouTube", L"https://www.youtube.com" },
-    { L"👥 Facebook", L"https://web.facebook.com" },
-    { L"✨ Gemini", L"https://gemini.google.com" },
-    { L"🚗 GTA V Web", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0" }
+    { L"Marcadores", L"action:bookmarks", L"folder.bmp", IDB_FOLDER, NULL, {0} },
+    { L"Juegos Web ▾", L"action:games_folder", L"game_folder.bmp", IDB_GAME_FOLDER, NULL, {0} },
+    { L"X", L"https://x.com", L"x.bmp", IDB_X, NULL, {0} },
+    { L"YT Music", L"https://music.youtube.com", L"ytm.bmp", IDB_YTM, NULL, {0} },
+    { L"YouTube", L"https://www.youtube.com", L"yt.bmp", IDB_YT, NULL, {0} },
+    { L"Facebook", L"https://web.facebook.com", L"fb.bmp", IDB_FB, NULL, {0} },
+    { L"Gemini", L"https://gemini.google.com", L"gemini.bmp", IDB_GEMINI, NULL, {0} },
+    { L"GTA V Web", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0", L"gta.bmp", IDB_GTA, NULL, {0} }
 };
 #define NUM_BOOKMARKS (sizeof(g_bookmarks) / sizeof(g_bookmarks[0]))
 
@@ -233,9 +251,9 @@ static void EnableDpiAwareness() {
 }
 
 // ----------------------------------------------------------------------------
-// Carga de Iconos desde Caché en Disco (Cero consumo permanente de RAM)
+// Carga de Iconos desde Caché en Disco y Recursos Embebidos (.rc)
 // ----------------------------------------------------------------------------
-static HBITMAP LoadCachedBmp(const wchar_t *filename) {
+static HBITMAP LoadCachedBmp(int resId, const wchar_t *filename) {
     wchar_t exePath[MAX_PATH];
     GetModuleFileName(NULL, exePath, MAX_PATH);
     wchar_t *lastSlash = wcsrchr(exePath, L'\\');
@@ -243,25 +261,33 @@ static HBITMAP LoadCachedBmp(const wchar_t *filename) {
 
     wchar_t fullPath[MAX_PATH];
     // 1. Probar en <exePath>\cache\<filename>
-    swprintf(fullPath, MAX_PATH, L"%s\\cache\\%s", exePath, filename);
+    swprintf(fullPath, MAX_PATH, L"%ls\\cache\\%ls", exePath, filename);
     if (GetFileAttributes(fullPath) == INVALID_FILE_ATTRIBUTES) {
         // 2. Probar en <exePath>\native_ui\cache\<filename>
-        swprintf(fullPath, MAX_PATH, L"%s\\native_ui\\cache\\%s", exePath, filename);
+        swprintf(fullPath, MAX_PATH, L"%ls\\native_ui\\cache\\%ls", exePath, filename);
         if (GetFileAttributes(fullPath) == INVALID_FILE_ATTRIBUTES) {
             // 3. Probar en <exePath>\..\native_ui\cache\<filename>
-            swprintf(fullPath, MAX_PATH, L"%s\\..\\native_ui\\cache\\%s", exePath, filename);
+            swprintf(fullPath, MAX_PATH, L"%ls\\..\\native_ui\\cache\\%ls", exePath, filename);
         }
     }
-    return (HBITMAP)LoadImage(NULL, fullPath, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+    HBITMAP hBmp = (HBITMAP)LoadImage(NULL, fullPath, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+    if (!hBmp && resId > 0) {
+        // Fallback garantizado desde recursos compilados en el ejecutable
+        hBmp = (HBITMAP)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(resId), IMAGE_BITMAP, 0, 0, LR_DEFAULTCOLOR);
+    }
+    return hBmp;
 }
 
 static void InitIconCache() {
     for (int i = 0; i < (int)NUM_APPS; i++) {
-        g_apps[i].hCachedBmp = LoadCachedBmp(g_apps[i].bmpName);
+        g_apps[i].hCachedBmp = LoadCachedBmp(g_apps[i].resId, g_apps[i].bmpName);
     }
-    g_hBmpWaterfox = LoadCachedBmp(L"wf.bmp");
-    g_hBmpFolder = LoadCachedBmp(L"folder.bmp");
-    g_hBmpGameFolder = LoadCachedBmp(L"game_folder.bmp");
+    for (int i = 0; i < (int)NUM_BOOKMARKS; i++) {
+        g_bookmarks[i].hIcon = LoadCachedBmp(g_bookmarks[i].resId, g_bookmarks[i].bmpName);
+    }
+    g_hBmpWaterfox = LoadCachedBmp(IDB_WF, L"wf.bmp");
+    g_hBmpFolder = LoadCachedBmp(IDB_FOLDER, L"folder.bmp");
+    g_hBmpGameFolder = LoadCachedBmp(IDB_GAME_FOLDER, L"game_folder.bmp");
 }
 
 static void FreeIconCache() {
@@ -269,6 +295,12 @@ static void FreeIconCache() {
         if (g_apps[i].hCachedBmp) {
             DeleteObject(g_apps[i].hCachedBmp);
             g_apps[i].hCachedBmp = NULL;
+        }
+    }
+    for (int i = 0; i < (int)NUM_BOOKMARKS; i++) {
+        if (g_bookmarks[i].hIcon) {
+            DeleteObject(g_bookmarks[i].hIcon);
+            g_bookmarks[i].hIcon = NULL;
         }
     }
     if (g_hBmpWaterfox) {
@@ -295,21 +327,21 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
     if (lastSlash) *lastSlash = L'\0';
 
     const wchar_t *candidatesBin[] = {
-        L"%s\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
-        L"%s\\..\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
-        L"%s\\app\\core\\waterfox.exe",
-        L"%s\\app\\waterfox.exe",
-        L"%s\\core\\waterfox.exe",
-        L"%s\\waterfox.exe"
+        L"%ls\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
+        L"%ls\\..\\WaterfoxLite_Portable\\app\\core\\waterfox.exe",
+        L"%ls\\app\\core\\waterfox.exe",
+        L"%ls\\app\\waterfox.exe",
+        L"%ls\\core\\waterfox.exe",
+        L"%ls\\waterfox.exe"
     };
 
     const wchar_t *candidatesProf[] = {
-        L"%s\\WaterfoxLite_Portable\\profile",
-        L"%s\\..\\WaterfoxLite_Portable\\profile",
-        L"%s\\profile",
-        L"%s\\profile",
-        L"%s\\profile",
-        L"%s\\profile"
+        L"%ls\\WaterfoxLite_Portable\\profile",
+        L"%ls\\..\\WaterfoxLite_Portable\\profile",
+        L"%ls\\profile",
+        L"%ls\\profile",
+        L"%ls\\profile",
+        L"%ls\\profile"
     };
 
     for (size_t i = 0; i < sizeof(candidatesBin) / sizeof(candidatesBin[0]); i++) {
@@ -325,10 +357,10 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
     wchar_t curDir[MAX_PATH];
     GetCurrentDirectory(MAX_PATH, curDir);
     wchar_t curBin[MAX_PATH];
-    swprintf(curBin, MAX_PATH, L"%s\\WaterfoxLite_Portable\\app\\core\\waterfox.exe", curDir);
+    swprintf(curBin, MAX_PATH, L"%ls\\WaterfoxLite_Portable\\app\\core\\waterfox.exe", curDir);
     if (GetFileAttributes(curBin) != INVALID_FILE_ATTRIBUTES) {
         wcsncpy(outBin, curBin, maxBin);
-        swprintf(outProf, maxProf, L"%s\\WaterfoxLite_Portable\\profile", curDir);
+        swprintf(outProf, maxProf, L"%ls\\WaterfoxLite_Portable\\profile", curDir);
         return TRUE;
     }
 
@@ -383,7 +415,7 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
     if (FindWaterfoxBinary(binPath, MAX_PATH, profPath, MAX_PATH)) {
         // Eliminar parent.lock huérfano si no hay proceso activo
         wchar_t lockPath[MAX_PATH];
-        swprintf(lockPath, MAX_PATH, L"%s\\parent.lock", profPath);
+        swprintf(lockPath, MAX_PATH, L"%ls\\parent.lock", profPath);
         DeleteFile(lockPath);
 
         // Directorio de trabajo del ejecutable Waterfox
@@ -395,9 +427,9 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
         // Lanzar con -profile sin -no-remote para permitir abrir pestañas fluidamente
         wchar_t args[1024];
         if (wcsncmp(url, L"-private-window ", 16) == 0) {
-            swprintf(args, 1024, L"-profile \"%s\" -private-window \"%s\"", profPath, url + 16);
+            swprintf(args, 1024, L"-profile \"%ls\" -private-window \"%ls\"", profPath, url + 16);
         } else {
-            swprintf(args, 1024, L"-profile \"%s\" \"%s\"", profPath, url);
+            swprintf(args, 1024, L"-profile \"%ls\" \"%ls\"", profPath, url);
         }
         ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
     } else {
@@ -525,14 +557,19 @@ static void SaveDCtoBMP(HDC hdc, int width, int height, const wchar_t *filename)
 
     char *pixels = (char *)malloc(imageSize);
     if (pixels) {
-        GetDIBits(memDC, hBmp, 0, height, pixels, &bih, DIB_RGB_COLORS);
-
         BITMAPFILEHEADER bfh = { 0 };
         bfh.bfType = 0x4D42; // "BM"
         bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
         bfh.bfSize = bfh.bfOffBits + imageSize;
 
-        HANDLE hFile = CreateFile(filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        wchar_t exeDir[MAX_PATH];
+        GetModuleFileName(NULL, exeDir, MAX_PATH);
+        wchar_t *slash = wcsrchr(exeDir, L'\\');
+        if (slash) *slash = L'\0';
+        wchar_t fullOut[MAX_PATH];
+        swprintf(fullOut, MAX_PATH, L"%ls\\%ls", exeDir, filename);
+
+        HANDLE hFile = CreateFile(fullOut, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (hFile != INVALID_HANDLE_VALUE) {
             DWORD written;
             WriteFile(hFile, &bfh, sizeof(bfh), &written, NULL);
@@ -663,8 +700,8 @@ static void RenderUI(HWND hwnd, HDC hdc) {
 
     SetTextColor(memDC, COLOR_TEXT);
     DrawText(memDC, L"↻", -1, &g_rcReload, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-    SelectObject(memDC, g_hFontSmall);
-    DrawText(memDC, L"🏠", -1, &g_rcHome, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+    SelectObject(memDC, g_hFontNormal);
+    DrawText(memDC, L"⌂", -1, &g_rcHome, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
     // Botones del lado derecho: Menú Hamburguesa '⋮' y Game Shield
     g_rcMenu.left = width - 42; g_rcMenu.top = 47; g_rcMenu.right = width - 10; g_rcMenu.bottom = 77;
@@ -679,7 +716,7 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     DrawDarkRect(memDC, &g_rcShield, (g_hoveredBtn == 6) ? COLOR_CARD_HOVER : RGB(28, 33, 40), shieldCol, 8);
     SetTextColor(memDC, shieldCol);
     SelectObject(memDC, g_hFontSmall);
-    DrawText(memDC, g_shieldBlocked ? L"🛡️ Shield Activo" : L"🚀 Booster Activo", -1, &g_rcShield, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+    DrawText(memDC, g_shieldBlocked ? L"🛡 SHIELD" : L"⚡ BOOSTER", -1, &g_rcShield, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
     // Barra de Direcciones / Omnibox
     int urlLeft = 142;
@@ -719,7 +756,8 @@ static void RenderUI(HWND hwnd, HDC hdc) {
         for (int i = 0; i < (int)NUM_BOOKMARKS; i++) {
             SIZE size;
             GetTextExtentPoint32(memDC, g_bookmarks[i].title, wcslen(g_bookmarks[i].title), &size);
-            int itemW = size.cx + 20;
+            int iconW = g_bookmarks[i].hIcon ? 20 : 0;
+            int itemW = size.cx + iconW + 16;
 
             g_bookmarks[i].rect.left = bmX;
             g_bookmarks[i].rect.top = currentY + 3;
@@ -731,15 +769,22 @@ static void RenderUI(HWND hwnd, HDC hdc) {
                 DrawDarkRect(memDC, &g_bookmarks[i].rect, COLOR_CARD_HOVER, COLOR_BORDER, 4);
             }
 
+            int contentX = bmX + 6;
+            if (g_bookmarks[i].hIcon) {
+                DrawIconBmp(memDC, g_bookmarks[i].hIcon, contentX, currentY + 6, 16, 16);
+                contentX += 20;
+            }
+
+            RECT textRect = { contentX, currentY + 3, g_bookmarks[i].rect.right - 4, currentY + 27 };
             // Destacar Carpeta de Juegos con acento dorado
             if (i == 1) {
                 SetTextColor(memDC, isBmHover ? COLOR_GOLD : RGB(220, 175, 55));
             } else {
                 SetTextColor(memDC, isBmHover ? COLOR_TEXT : COLOR_TEXT_MUTED);
             }
-            DrawText(memDC, g_bookmarks[i].title, -1, &g_bookmarks[i].rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+            DrawText(memDC, g_bookmarks[i].title, -1, &textRect, DT_SINGLELINE | DT_LEFT | DT_VCENTER);
 
-            bmX += itemW + 8;
+            bmX += itemW + 6;
         }
 
         currentY += 30;
@@ -840,7 +885,7 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     SetTextColor(memDC, COLOR_GREEN);
 
     wchar_t ramText[256];
-    swprintf(ramText, 256, L"🟢 RAM en Home: %.2f MB  |  CPU: 0.0%%  |  24 Juegos Web en Carpeta  |  Atajos: Teclas 1-7 abren apps y juegos", ramMB);
+    swprintf(ramText, 256, L"● RAM en Home: %.2f MB  |  CPU: 0.0%%  |  24 Juegos Web en Carpeta  |  Atajos: Teclas 1-7 abren apps y juegos", ramMB);
     DrawText(memDC, ramText, -1, &footerRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
     BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
@@ -1383,8 +1428,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.lpszClassName = L"WaterfoxLiteNativeTheme";
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-    wc.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APPICON));
+    wc.hIconSm = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, 16, 16, 0);
+    if (!wc.hIcon) wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    if (!wc.hIconSm) wc.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
 
     if (!RegisterClassEx(&wc)) return 1;
 
@@ -1399,13 +1446,57 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     if (!hwnd) return 1;
 
-    if (strstr(lpCmdLine, "--screenshot") != NULL) {
-        ShowWindow(hwnd, SW_SHOW);
-        UpdateWindow(hwnd);
-        HDC hdc = GetDC(hwnd);
-        RenderUI(hwnd, hdc);
-        SaveDCtoBMP(hdc, 1080, 680, L"waterfox_native_c_ui.bmp");
-        ReleaseDC(hwnd, hdc);
+    if (strstr(lpCmdLine, "--screenshot") != NULL || wcsstr(GetCommandLineW(), L"--screenshot") != NULL) {
+        HDC screenDC = GetDC(NULL);
+        HDC memDC = CreateCompatibleDC(screenDC);
+        HBITMAP hBmp = CreateCompatibleBitmap(screenDC, 1080, 680);
+        ReleaseDC(NULL, screenDC);
+        HGDIOBJ oldBmp = SelectObject(memDC, hBmp);
+
+        RenderUI(hwnd, memDC);
+
+        BITMAPINFO bih = { 0 };
+        bih.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bih.bmiHeader.biWidth = 1080;
+        bih.bmiHeader.biHeight = 680;
+        bih.bmiHeader.biPlanes = 1;
+        bih.bmiHeader.biBitCount = 24;
+        bih.bmiHeader.biCompression = BI_RGB;
+        int rowSize = ((1080 * 24 + 31) / 32) * 4;
+        DWORD imageSize = rowSize * 680;
+        bih.bmiHeader.biSizeImage = imageSize;
+
+        char *pixels = (char *)malloc(imageSize);
+        if (pixels) {
+            GetDIBits(memDC, hBmp, 0, 680, pixels, &bih, DIB_RGB_COLORS);
+
+            BITMAPFILEHEADER bfh = { 0 };
+            bfh.bfType = 0x4D42;
+            bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+            bfh.bfSize = bfh.bfOffBits + imageSize;
+
+            wchar_t exeDir[MAX_PATH];
+            GetModuleFileName(NULL, exeDir, MAX_PATH);
+            wchar_t *slash = wcsrchr(exeDir, L'\\');
+            if (slash) *slash = L'\0';
+            wchar_t fullOut[MAX_PATH];
+            swprintf(fullOut, MAX_PATH, L"%ls\\waterfox_native_c_ui.bmp", exeDir);
+
+            HANDLE hFile = CreateFile(fullOut, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (hFile != INVALID_HANDLE_VALUE) {
+                DWORD written;
+                WriteFile(hFile, &bfh, sizeof(bfh), &written, NULL);
+                WriteFile(hFile, &bih.bmiHeader, sizeof(bih.bmiHeader), &written, NULL);
+                WriteFile(hFile, pixels, imageSize, &written, NULL);
+                CloseHandle(hFile);
+            }
+            free(pixels);
+        }
+
+        SelectObject(memDC, oldBmp);
+        DeleteObject(hBmp);
+        DeleteDC(memDC);
+
         DestroyWindow(hwnd);
         return 0;
     }
@@ -1435,9 +1526,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                     if (wcsstr(p, L"://") != NULL || wcsncmp(p, L"about:", 6) == 0) {
                         wcscpy(target, p);
                     } else if (wcschr(p, L'.') != NULL && wcschr(p, L' ') == NULL) {
-                        swprintf(target, 1024, L"https://%s", p);
+                        swprintf(target, 1024, L"https://%ls", p);
                     } else {
-                        swprintf(target, 1024, L"https://duckduckgo.com/?q=%s", p);
+                        swprintf(target, 1024, L"https://duckduckgo.com/?q=%ls", p);
                     }
                     NavigateTab(g_activeTabIdx, p, target);
                     LaunchUrl(hwnd, target);

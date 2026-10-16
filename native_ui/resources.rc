@@ -1,0 +1,14 @@
+#include <windows.h>
+
+101 ICON "native_ui/app.ico"
+
+201 BITMAP "native_ui/cache/x.bmp"
+202 BITMAP "native_ui/cache/ytm.bmp"
+203 BITMAP "native_ui/cache/yt.bmp"
+204 BITMAP "native_ui/cache/fb.bmp"
+205 BITMAP "native_ui/cache/gemini.bmp"
+206 BITMAP "native_ui/cache/gta.bmp"
+207 BITMAP "native_ui/cache/gamepad.bmp"
+208 BITMAP "native_ui/cache/wf.bmp"
+209 BITMAP "native_ui/cache/folder.bmp"
+210 BITMAP "native_ui/cache/game_folder.bmp"

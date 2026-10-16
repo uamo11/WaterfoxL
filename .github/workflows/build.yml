@@ -79,7 +79,8 @@ jobs:
                 "media.av1.enabled" = $false
                 "media.wmf.vp9.enabled" = $false
                 "dom.webcodecs.enabled" = $false
-                "webgl.out-of-process" = $true
+                "webgl.out-of-process" = $false
+                "layers.gpu-process.enabled" = $false
                 "dom.ipc.processHangMonitor" = $true
                 "dom.ipc.processHangTimeoutSecs" = 15
                 "javascript.options.parallel_parsing" = $false
@@ -111,9 +112,11 @@ jobs:
           Copy-Item -Path "core\modules\*" -Destination $modulesDir -Force
 
           # 5. Compile and embed Native C Theme Shell & Icon Cache
-          Write-Host "Compiling Waterfox Lite Native UI Shell (C / Win32)..."
+          Write-Host "Compiling Waterfox Lite Native UI Shell (C / Win32) with embedded resources..."
           python scripts/generate_icon_cache.py
-          gcc -O3 -s native_ui/waterfox_lite_ui.c -o "WaterfoxLite_Dist\WaterfoxLite_NativeUI.exe" -mwindows -lgdi32 -luser32 -lcomctl32 -lpsapi -lshell32 -ldwmapi
+          windres native_ui/resources.rc -O coff -o native_ui/resources.o
+          gcc -O3 -s native_ui/waterfox_lite_ui.c native_ui/resources.o -o "WaterfoxLite_Dist\WaterfoxLite_NativeUI.exe" -mwindows -lgdi32 -luser32 -lcomctl32 -lpsapi -lshell32 -ldwmapi -lshlwapi
+          Copy-Item "WaterfoxLite_Dist\WaterfoxLite_NativeUI.exe" "WaterfoxLite_Dist\WaterfoxLite.exe" -Force
           $cacheDist = "WaterfoxLite_Dist\cache"
           New-Item -ItemType Directory -Path $cacheDist -Force
           Copy-Item -Path "native_ui\cache\*" -Destination $cacheDist -Force
@@ -123,10 +126,12 @@ jobs:
             '@echo off',
             'title Waterfox Lite (Portable)',
             'cd /d "%~dp0"',
-            'if exist "WaterfoxLite_NativeUI.exe" (',
+            'if exist "WaterfoxLite.exe" (',
+            '    start "" "WaterfoxLite.exe" %*',
+            ') else if exist "WaterfoxLite_NativeUI.exe" (',
             '    start "" "WaterfoxLite_NativeUI.exe" %*',
             ') else (',
-            '    start "" "app\waterfox.exe" -profile "profile" -no-remote %*',
+            '    start "" "app\waterfox.exe" -profile "profile" %*',
             ')',
             'exit'
           )

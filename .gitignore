@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.o
+*.obj
 
 # Waterfox build & temporary artifacts
 WaterfoxLite_Dist/
