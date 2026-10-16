@@ -1,6 +1,6 @@
 /* ==========================================================================
    Waterfox Lite - userContent.css
-   Inyección directa a nivel de motor para X, YouTube, YouTube Music y Facebook
+   Inyección directa a nivel de motor para X, YouTube, YouTube Music, Facebook y Gemini
    ========================================================================== */
 
 /* 1. X (Twitter) */
@@ -71,10 +71,29 @@
     content-visibility: auto !important;
     contain-intrinsic-size: 350px !important;
   }
-  /* Ocultar barra de historias y publicidad para liberar GPU y CPU */
   [data-pagelet="RightRail"],
   div:has(> a[aria-label="Publicidad"]),
   div:has(> a[aria-label="Sponsored"]) {
     display: none !important;
+  }
+}
+
+/* 5. Google Gemini */
+@-moz-document domain("gemini.google.com") {
+  * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .sparkle, .glowing-bg, [data-test-id="sparkle-animation"] {
+    animation: none !important;
+  }
+  conversation-container > div,
+  .model-response-text,
+  user-query-container {
+    content-visibility: auto !important;
+    contain-intrinsic-size: 200px !important;
+  }
+  side-nav, .input-area-container, header {
+    box-shadow: none !important;
   }
 }
