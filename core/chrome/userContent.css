@@ -1,8 +1,9 @@
 /* ==========================================================================
    Waterfox Lite - userContent.css
-   Inyección directa a nivel de motor para X, YouTube y YouTube Music
+   Inyección directa a nivel de motor para X, YouTube, YouTube Music y Facebook
    ========================================================================== */
 
+/* 1. X (Twitter) */
 @-moz-document domain("x.com"), domain("twitter.com") {
   * {
     backdrop-filter: none !important;
@@ -23,6 +24,7 @@
   }
 }
 
+/* 2. YouTube Music */
 @-moz-document domain("music.youtube.com") {
   ytmusic-nav-bar,
   ytmusic-player-bar,
@@ -41,22 +43,38 @@
   }
 }
 
+/* 3. YouTube Principal */
 @-moz-document domain("www.youtube.com"), domain("youtube.com") {
-  /* Eliminar backdrop-filter blur en cabecera */
   #masthead-container, ytd-masthead, .ytp-chrome-bottom {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
-  /* Ocultar anuncios de Polymer */
   ytd-action-companion-ad-renderer,
   ytd-ad-slot-renderer,
   ytd-banner-promo-renderer,
   #masthead-ad {
     display: none !important;
   }
-  /* content-visibility auto en miniaturas para fluidez en scroll */
   ytd-rich-item-renderer, ytd-video-renderer {
     content-visibility: auto !important;
     contain-intrinsic-size: 250px !important;
+  }
+}
+
+/* 4. Facebook */
+@-moz-document domain("facebook.com"), domain("web.facebook.com") {
+  * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  [role="feed"] > div {
+    content-visibility: auto !important;
+    contain-intrinsic-size: 350px !important;
+  }
+  /* Ocultar barra de historias y publicidad para liberar GPU y CPU */
+  [data-pagelet="RightRail"],
+  div:has(> a[aria-label="Publicidad"]),
+  div:has(> a[aria-label="Sponsored"]) {
+    display: none !important;
   }
 }
