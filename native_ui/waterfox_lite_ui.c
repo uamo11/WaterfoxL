@@ -215,6 +215,27 @@ static BOOL g_isBookmarked = FALSE;
 static RECT g_rcBack, g_rcFwd, g_rcReload, g_rcHome, g_rcStar, g_rcShield, g_rcMenu, g_rcNewTab;
 static RECT g_rcBookmarksBar;
 
+#define TIMER_MEM_TRIM    1
+#define TIMER_DOCK_GECKO  2
+
+#ifndef APPCOMMAND_BROWSER_BACKWARD
+#define APPCOMMAND_BROWSER_BACKWARD 1
+#endif
+#ifndef APPCOMMAND_BROWSER_FORWARD
+#define APPCOMMAND_BROWSER_FORWARD  2
+#endif
+#ifndef APPCOMMAND_BROWSER_REFRESH
+#define APPCOMMAND_BROWSER_REFRESH  3
+#endif
+#ifndef FAPPCOMMAND_KEY
+#define FAPPCOMMAND_KEY 0
+#endif
+
+static HWND g_hWndMain = NULL;
+static HWND g_hGeckoWnd = NULL;
+static BOOL g_isGeckoDocking = FALSE;
+static int g_dockAttempts = 0;
+
 // Declaraciones adelantadas
 static void LaunchUrl(HWND hwnd, const wchar_t *url);
 static void NavigateTab(int tabIdx, const wchar_t *title, const wchar_t *url);
@@ -391,10 +412,56 @@ static BOOL IsGameUrl(const wchar_t *url) {
 }
 
 // ----------------------------------------------------------------------------
+// Acoplamiento e Incrustación de Ventana Gecko en Contenedor Nativo C
+// ----------------------------------------------------------------------------
+static BOOL CALLBACK EnumGeckoProc(HWND hwnd, LPARAM lParam) {
+    if (IsWindowVisible(hwnd) && GetParent(hwnd) == NULL) {
+        wchar_t className[256];
+        GetClassName(hwnd, className, 256);
+        if (wcscmp(className, L"MozillaWindowClass") == 0) {
+            HWND *pFound = (HWND*)lParam;
+            *pFound = hwnd;
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
+    if (!hwndGecko || !IsWindow(hwndGecko)) return;
+
+    LONG_PTR style = GetWindowLongPtr(hwndGecko, GWL_STYLE);
+    style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_BORDER);
+    style |= WS_CHILD;
+    SetWindowLongPtr(hwndGecko, GWL_STYLE, style);
+    SetParent(hwndGecko, hwndParent);
+
+    RECT rc;
+    GetClientRect(hwndParent, &rc);
+    int topY = g_showBookmarksBar ? 114 : 84;
+    int childH = rc.bottom - topY - 34;
+    if (childH < 0) childH = 0;
+
+    SetWindowPos(hwndGecko, NULL, 0, topY, rc.right, childH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    g_hGeckoWnd = hwndGecko;
+    g_isGeckoDocking = FALSE;
+    SetFocus(hwndGecko);
+}
+
+// ----------------------------------------------------------------------------
 // Lanzador hacia Waterfox Lite
 // ----------------------------------------------------------------------------
 static void LaunchUrl(HWND hwnd, const wchar_t *url) {
     if (!url || wcslen(url) == 0) return;
+
+    // Si es about:home, simplemente ocultamos el visor Gecko y mostramos la UI nativa en C
+    if (wcscmp(url, L"about:home") == 0) {
+        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+            ShowWindow(g_hGeckoWnd, SW_HIDE);
+        }
+        InvalidateRect(hwnd, NULL, FALSE);
+        return;
+    }
 
     if (g_shieldBlocked && IsGameUrl(url)) {
         int resp = MessageBox(hwnd,
@@ -413,10 +480,8 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
     wchar_t binPath[MAX_PATH];
     wchar_t profPath[MAX_PATH];
     if (FindWaterfoxBinary(binPath, MAX_PATH, profPath, MAX_PATH)) {
-        // Eliminar parent.lock huérfano si no hay proceso activo
         wchar_t lockPath[MAX_PATH];
         swprintf(lockPath, MAX_PATH, L"%ls\\parent.lock", profPath);
-        DeleteFile(lockPath);
 
         // Directorio de trabajo del ejecutable Waterfox
         wchar_t binDir[MAX_PATH];
@@ -431,7 +496,27 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
         } else {
             swprintf(args, 1024, L"-profile \"%ls\" \"%ls\"", profPath, url);
         }
-        ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
+
+        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+            // Ya está acoplado: mostrar ventana y enviar navegación
+            ShowWindow(g_hGeckoWnd, SW_SHOW);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            int topY = g_showBookmarksBar ? 114 : 84;
+            int childH = rc.bottom - topY - 34;
+            if (childH < 0) childH = 0;
+            SetWindowPos(g_hGeckoWnd, NULL, 0, topY, rc.right, childH, SWP_NOZORDER | SWP_SHOWWINDOW);
+            ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
+            SetFocus(g_hGeckoWnd);
+        } else {
+            // Eliminar parent.lock huérfano si no hay proceso activo
+            DeleteFile(lockPath);
+            g_hGeckoWnd = NULL;
+            g_isGeckoDocking = TRUE;
+            g_dockAttempts = 0;
+            ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
+            SetTimer(hwnd, TIMER_DOCK_GECKO, 150, NULL);
+        }
     } else {
         ShellExecute(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL);
     }
@@ -468,7 +553,13 @@ static void CreateNewTab(HWND hwnd, const wchar_t *title, const wchar_t *url) {
         for (int j = 0; j <= newIdx; j++) g_tabs[j].isActive = (j == newIdx);
         g_activeTabIdx = newIdx;
         g_tabCount++;
-        SetWindowText(g_hEditUrl, wcscmp(g_tabs[newIdx].url, L"about:home") == 0 ? L"" : g_tabs[newIdx].url);
+        BOOL isHome = (wcscmp(g_tabs[newIdx].url, L"about:home") == 0);
+        SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[newIdx].url);
+        if (isHome) {
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+        } else {
+            LaunchUrl(hwnd, g_tabs[newIdx].url);
+        }
         InvalidateRect(hwnd, NULL, FALSE);
     }
 }
@@ -484,7 +575,13 @@ static void CloseTab(HWND hwnd, int tabIdx) {
         for (int k = 0; k < g_tabCount; k++) {
             g_tabs[k].isActive = (k == g_activeTabIdx);
         }
-        SetWindowText(g_hEditUrl, wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") == 0 ? L"" : g_tabs[g_activeTabIdx].url);
+        BOOL isHome = (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") == 0);
+        SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[g_activeTabIdx].url);
+        if (isHome) {
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+        } else {
+            LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url);
+        }
         InvalidateRect(hwnd, NULL, FALSE);
     } else {
         wcscpy(g_tabs[0].title, L"Waterfox Lite - Home");
@@ -493,6 +590,7 @@ static void CloseTab(HWND hwnd, int tabIdx) {
         g_tabs[0].historyIdx = 0;
         wcscpy(g_tabs[0].history[0], L"about:home");
         SetWindowText(g_hEditUrl, L"");
+        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
         InvalidateRect(hwnd, NULL, FALSE);
     }
 }
@@ -885,7 +983,11 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     SetTextColor(memDC, COLOR_GREEN);
 
     wchar_t ramText[256];
-    swprintf(ramText, 256, L"● RAM en Home: %.2f MB  |  CPU: 0.0%%  |  24 Juegos Web en Carpeta  |  Atajos: Teclas 1-7 abren apps y juegos", ramMB);
+    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+        swprintf(ramText, 256, L"● Waterfox Lite: UI C Nativa (%.2f MB) + Gecko Engine Acoplado (H.264 por GPU)  |  Atajos: Teclas 1-7", ramMB);
+    } else {
+        swprintf(ramText, 256, L"● RAM en Home: %.2f MB  |  CPU: 0.0%%  |  UI 100%% en C Nativo  |  24 Juegos Web en Carpeta  |  Atajos: Teclas 1-7", ramMB);
+    }
     DrawText(memDC, ramText, -1, &footerRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
     BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
@@ -1060,7 +1162,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SendMessage(g_hEditUrl, WM_SETFONT, (WPARAM)g_hFontNormal, TRUE);
         SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar en la web o presiona 1-7 para abrir apps y juegos...");
 
-        SetTimer(hwnd, 1, 1000, NULL);
+        g_hWndMain = hwnd;
+        SetTimer(hwnd, TIMER_MEM_TRIM, 1000, NULL);
         return 0;
     }
 
@@ -1073,26 +1176,51 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_SIZE: {
         int width = LOWORD(lParam);
+        int height = HIWORD(lParam);
         int urlRight = width - 195;
         if (g_hEditUrl) {
             SetWindowPos(g_hEditUrl, NULL, 172, 52, urlRight - 210, 22, SWP_NOZORDER);
+        }
+        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+            int topY = g_showBookmarksBar ? 114 : 84;
+            int childH = height - topY - 34;
+            if (childH < 0) childH = 0;
+            SetWindowPos(g_hGeckoWnd, NULL, 0, topY, width, childH, SWP_NOZORDER);
         }
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
     }
 
     case WM_TIMER: {
-        static int s_trimCount = 0;
-        s_trimCount++;
-        if (s_trimCount >= 10) {
-            s_trimCount = 0;
-            EmptyWorkingSet(GetCurrentProcess());
+        if (wParam == TIMER_MEM_TRIM) {
+            static int s_trimCount = 0;
+            s_trimCount++;
+            if (s_trimCount >= 10) {
+                s_trimCount = 0;
+                EmptyWorkingSet(GetCurrentProcess());
+            }
+
+            RECT clientRect;
+            GetClientRect(hwnd, &clientRect);
+            RECT footer = { 0, clientRect.bottom - 34, clientRect.right, clientRect.bottom };
+            InvalidateRect(hwnd, &footer, FALSE);
+            return 0;
         }
 
-        RECT clientRect;
-        GetClientRect(hwnd, &clientRect);
-        RECT footer = { 0, clientRect.bottom - 34, clientRect.right, clientRect.bottom };
-        InvalidateRect(hwnd, &footer, FALSE);
+        if (wParam == TIMER_DOCK_GECKO) {
+            g_dockAttempts++;
+            HWND hFound = NULL;
+            EnumWindows(EnumGeckoProc, (LPARAM)&hFound);
+            if (hFound) {
+                KillTimer(hwnd, TIMER_DOCK_GECKO);
+                DockGeckoWindow(hwnd, hFound);
+                InvalidateRect(hwnd, NULL, FALSE);
+            } else if (g_dockAttempts >= 60) {
+                KillTimer(hwnd, TIMER_DOCK_GECKO);
+                g_isGeckoDocking = FALSE;
+            }
+            return 0;
+        }
         return 0;
     }
 
@@ -1176,7 +1304,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (PtInRect(&g_tabs[i].rect, (POINT){ x, y })) {
                 g_activeTabIdx = i;
                 for (int j = 0; j < g_tabCount; j++) g_tabs[j].isActive = (j == i);
-                SetWindowText(g_hEditUrl, wcscmp(g_tabs[i].url, L"about:home") == 0 ? L"" : g_tabs[i].url);
+                BOOL isHome = (wcscmp(g_tabs[i].url, L"about:home") == 0);
+                SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[i].url);
+                if (isHome) {
+                    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+                } else {
+                    LaunchUrl(hwnd, g_tabs[i].url);
+                }
                 InvalidateRect(hwnd, NULL, FALSE);
                 return 0;
             }
@@ -1191,24 +1325,36 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // 3. Botones de Navegación Atrás / Adelante con Historial Real
         BrowserTab *activeTab = &g_tabs[g_activeTabIdx];
         if (PtInRect(&g_rcBack, (POINT){ x, y })) {
-            if (activeTab->historyIdx > 0) {
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+                SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_BACKWARD));
+            } else if (activeTab->historyIdx > 0) {
                 activeTab->historyIdx--;
                 const wchar_t *prevUrl = activeTab->history[activeTab->historyIdx];
                 wcsncpy(activeTab->url, prevUrl, 511);
                 SetWindowText(g_hEditUrl, wcscmp(prevUrl, L"about:home") == 0 ? L"" : prevUrl);
-                if (wcscmp(prevUrl, L"about:home") != 0) LaunchUrl(hwnd, prevUrl);
+                if (wcscmp(prevUrl, L"about:home") != 0) {
+                    LaunchUrl(hwnd, prevUrl);
+                } else {
+                    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+                }
                 InvalidateRect(hwnd, NULL, FALSE);
             }
             return 0;
         }
 
         if (PtInRect(&g_rcFwd, (POINT){ x, y })) {
-            if (activeTab->historyIdx + 1 < activeTab->historyCount) {
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+                SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_FORWARD));
+            } else if (activeTab->historyIdx + 1 < activeTab->historyCount) {
                 activeTab->historyIdx++;
                 const wchar_t *nextUrl = activeTab->history[activeTab->historyIdx];
                 wcsncpy(activeTab->url, nextUrl, 511);
                 SetWindowText(g_hEditUrl, wcscmp(nextUrl, L"about:home") == 0 ? L"" : nextUrl);
-                if (wcscmp(nextUrl, L"about:home") != 0) LaunchUrl(hwnd, nextUrl);
+                if (wcscmp(nextUrl, L"about:home") != 0) {
+                    LaunchUrl(hwnd, nextUrl);
+                } else {
+                    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+                }
                 InvalidateRect(hwnd, NULL, FALSE);
             }
             return 0;
@@ -1238,13 +1384,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (PtInRect(&g_rcHome, (POINT){ x, y })) {
             NavigateTab(g_activeTabIdx, L"Waterfox Lite - Home", L"about:home");
             SetWindowText(g_hEditUrl, L"");
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+                ShowWindow(g_hGeckoWnd, SW_HIDE);
+            }
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
 
         // 8. Botón Recargar ↻
         if (PtInRect(&g_rcReload, (POINT){ x, y })) {
-            if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0) {
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+                SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_REFRESH));
+            } else if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0) {
                 LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url);
             } else {
                 InvalidateRect(hwnd, NULL, FALSE);
@@ -1326,6 +1477,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         case IDM_TOGGLE_BOOKMARKS:
             g_showBookmarksBar = !g_showBookmarksBar;
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+                RECT rc;
+                GetClientRect(hwnd, &rc);
+                int topY = g_showBookmarksBar ? 114 : 84;
+                int childH = rc.bottom - topY - 34;
+                if (childH < 0) childH = 0;
+                SetWindowPos(g_hGeckoWnd, NULL, 0, topY, rc.right, childH, SWP_NOZORDER);
+            }
             InvalidateRect(hwnd, NULL, FALSE);
             break;
 
@@ -1395,6 +1554,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_DESTROY: {
+        KillTimer(hwnd, TIMER_MEM_TRIM);
+        KillTimer(hwnd, TIMER_DOCK_GECKO);
+        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+            SendMessage(g_hGeckoWnd, WM_CLOSE, 0, 0);
+            g_hGeckoWnd = NULL;
+        }
         FreeIconCache();
         if (g_hFontNormal) { DeleteObject(g_hFontNormal); g_hFontNormal = NULL; }
         if (g_hFontBold)   { DeleteObject(g_hFontBold); g_hFontBold = NULL; }

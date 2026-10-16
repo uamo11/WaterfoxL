@@ -1,21 +1,29 @@
 /* ==========================================================================
    Waterfox Lite - userChrome.css
-   Interfaz ultraligera con animaciones reducidas para Pentium G620
+   Ocultar chrome nativo de Gecko: La UI completa se gestiona en C Nativo (Win32)
    ========================================================================== */
 
-/* Reducir transiciones de pestañas y botones para respuesta instantánea */
-#TabsToolbar, .tabbrowser-tab, .tab-background, #nav-bar {
-  transition: none !important;
-  animation: none !important;
+/* Ocultar toda la barra de navegación, pestañas y herramientas de Gecko */
+#navigator-toolbox,
+#titlebar,
+#TabsToolbar,
+#nav-bar,
+#PersonalToolbar,
+#status-bar {
+  display: none !important;
+  visibility: collapse !important;
+  height: 0px !important;
+  min-height: 0px !important;
+  max-height: 0px !important;
 }
 
-/* Reducir el padding de la barra de pestañas para ganar espacio vertical */
-.tabbrowser-tab {
-  min-height: 32px !important;
-}
-
-/* Desactivar efectos de sombra pesados */
-#navigator-toolbox {
+/* El contenido web ocupa el 100% del área del contenedor sin bordes */
+#main-window,
+#browser,
+#appcontent,
+.browserContainer,
+browser {
+  border: none !important;
   box-shadow: none !important;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.2) !important;
+  background-color: #0d1117 !important;
 }
