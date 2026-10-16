@@ -62,6 +62,13 @@
 #define IDM_ZOOM_RESET       2015
 
 #define ID_GAME_START        4000
+#define ID_HIST_START        6000
+#define IDM_HIST_FULL        6099
+#define IDM_HIST_CLEAR       6098
+
+#define IDM_DL_FOLDER        7001
+#define IDM_DL_VIEW          7002
+#define IDM_DL_TRIM          7003
 
 // Identificadores de Recursos Embebidos (.rc)
 #define IDI_APPICON       101
@@ -260,6 +267,12 @@ static void CreateNewTab(HWND hwnd, const wchar_t *title, const wchar_t *url);
 static void CloseTab(HWND hwnd, int tabIdx);
 static void NavigateTab(int tabIdx, const wchar_t *title, const wchar_t *url);
 static void ShowGamesFolderPopup(HWND hwnd, RECT *anchorRect);
+static void ShowHistoryPopup(HWND hwnd, POINT pt);
+static void ShowDownloadsPopup(HWND hwnd, POINT pt);
+static void ToggleBookmarkForActiveTab(HWND hwnd);
+static void ReloadActiveTab(HWND hwnd);
+static void NavigateBack(HWND hwnd);
+static void NavigateForward(HWND hwnd);
 
 // ----------------------------------------------------------------------------
 // Medición de Memoria RAM Real
@@ -538,6 +551,48 @@ static void LoadBookmarksFromFile() {
 }
 
 // ----------------------------------------------------------------------------
+// Registro Global de Historial de Sesión en Memoria (Visual History)
+// ----------------------------------------------------------------------------
+typedef struct {
+    wchar_t title[64];
+    wchar_t url[512];
+    SYSTEMTIME timestamp;
+} SessionHistoryEntry;
+
+#define MAX_SESSION_HISTORY 25
+static SessionHistoryEntry g_sessionHistory[MAX_SESSION_HISTORY];
+static int g_sessionHistoryCount = 0;
+
+static void AddSessionHistory(const wchar_t *title, const wchar_t *url) {
+    if (!url || wcscmp(url, L"about:home") == 0 || wcslen(url) == 0) return;
+
+    // Si ya es el primer elemento, solo actualizar el título si estaba vacío
+    if (g_sessionHistoryCount > 0 && wcscmp(g_sessionHistory[0].url, url) == 0) {
+        if (title && wcslen(title) > 0 && wcscmp(title, L"Nueva Pestaña") != 0) {
+            wcsncpy(g_sessionHistory[0].title, title, 63);
+            g_sessionHistory[0].title[63] = L'\0';
+        }
+        return;
+    }
+
+    // Desplazar elementos hacia abajo
+    int limit = (g_sessionHistoryCount < MAX_SESSION_HISTORY) ? g_sessionHistoryCount : (MAX_SESSION_HISTORY - 1);
+    for (int i = limit; i > 0; i--) {
+        g_sessionHistory[i] = g_sessionHistory[i - 1];
+    }
+
+    wcsncpy(g_sessionHistory[0].title, (title && wcslen(title) > 0) ? title : url, 63);
+    g_sessionHistory[0].title[63] = L'\0';
+    wcsncpy(g_sessionHistory[0].url, url, 511);
+    g_sessionHistory[0].url[511] = L'\0';
+    GetLocalTime(&g_sessionHistory[0].timestamp);
+
+    if (g_sessionHistoryCount < MAX_SESSION_HISTORY) {
+        g_sessionHistoryCount++;
+    }
+}
+
+// ----------------------------------------------------------------------------
 // Codificación de Búsqueda URL (Google Search con UTF-8 Percent-Encoding RFC 3986)
 // ----------------------------------------------------------------------------
 static void UrlEncodeSearchQuery(const wchar_t *query, wchar_t *outEncoded, size_t maxLen) {
@@ -746,6 +801,7 @@ static void CALLBACK GeckoTitleWinEventProc(HWINEVENTHOOK hWinEventHook, DWORD e
                 if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0 && wcslen(titleBuf) > 0) {
                     wcsncpy(g_tabs[g_activeTabIdx].title, titleBuf, 63);
                     g_tabs[g_activeTabIdx].title[63] = L'\0';
+                    AddSessionHistory(titleBuf, g_tabs[g_activeTabIdx].url);
                     g_isLoading = FALSE;
                     UpdateBookmarkStatus();
                     if (g_hWndMain && IsWindow(g_hWndMain)) {
@@ -964,6 +1020,7 @@ static void NavigateTab(int tabIdx, const wchar_t *title, const wchar_t *url) {
             t->historyCount = t->historyIdx + 1;
         }
     }
+    AddSessionHistory(t->title, t->url);
 }
 
 static void CreateNewTab(HWND hwnd, const wchar_t *title, const wchar_t *url) {
@@ -1623,6 +1680,155 @@ static void ShowGamesFolderPopup(HWND hwnd, RECT *anchorRect) {
 }
 
 // ----------------------------------------------------------------------------
+// Funciones Auxiliares de Navegación y Marcadores (Compartidas por Ratón y Teclado)
+// ----------------------------------------------------------------------------
+static void ToggleBookmarkForActiveTab(HWND hwnd) {
+    if (g_activeTabIdx < 0 || g_activeTabIdx >= g_tabCount) return;
+    const wchar_t *curUrl = g_tabs[g_activeTabIdx].url;
+    if (curUrl && wcscmp(curUrl, L"about:home") != 0 && wcslen(curUrl) > 0) {
+        int foundIdx = -1;
+        for (int i = 0; i < g_bookmarkCount; i++) {
+            if (wcscmp(g_bookmarks[i].url, curUrl) == 0) {
+                foundIdx = i;
+                break;
+            }
+        }
+        if (foundIdx >= 0) {
+            for (int j = foundIdx; j < g_bookmarkCount - 1; j++) {
+                g_bookmarks[j] = g_bookmarks[j + 1];
+            }
+            g_bookmarkCount--;
+            g_isBookmarked = FALSE;
+            SaveBookmarksToFile();
+        } else if (g_bookmarkCount < MAX_BOOKMARKS) {
+            wcsncpy(g_bookmarks[g_bookmarkCount].title, g_tabs[g_activeTabIdx].title, 63);
+            g_bookmarks[g_bookmarkCount].title[63] = L'\0';
+            wcsncpy(g_bookmarks[g_bookmarkCount].url, curUrl, 511);
+            g_bookmarks[g_bookmarkCount].url[511] = L'\0';
+            g_bookmarks[g_bookmarkCount].hIcon = GetTabIcon(curUrl, g_tabs[g_activeTabIdx].title);
+            g_bookmarks[g_bookmarkCount].resId = 0;
+            g_bookmarkCount++;
+            g_isBookmarked = TRUE;
+            SaveBookmarksToFile();
+        }
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+}
+
+static void ReloadActiveTab(HWND hwnd) {
+    if (g_activeTabIdx < 0 || g_activeTabIdx >= g_tabCount) return;
+    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+        SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_REFRESH));
+    } else if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0) {
+        LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url, FALSE);
+    } else {
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+}
+
+static void NavigateBack(HWND hwnd) {
+    if (g_activeTabIdx < 0 || g_activeTabIdx >= g_tabCount) return;
+    BrowserTab *activeTab = &g_tabs[g_activeTabIdx];
+    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+        SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_BACKWARD));
+    } else if (activeTab->historyIdx > 0) {
+        activeTab->historyIdx--;
+        const wchar_t *prevUrl = activeTab->history[activeTab->historyIdx];
+        wcsncpy(activeTab->url, prevUrl, 511);
+        SetWindowText(g_hEditUrl, wcscmp(prevUrl, L"about:home") == 0 ? L"" : prevUrl);
+        if (wcscmp(prevUrl, L"about:home") != 0) {
+            LaunchUrl(hwnd, prevUrl, FALSE);
+        } else {
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+        }
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+}
+
+static void NavigateForward(HWND hwnd) {
+    if (g_activeTabIdx < 0 || g_activeTabIdx >= g_tabCount) return;
+    BrowserTab *activeTab = &g_tabs[g_activeTabIdx];
+    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+        SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_FORWARD));
+    } else if (activeTab->historyIdx + 1 < activeTab->historyCount) {
+        activeTab->historyIdx++;
+        const wchar_t *nextUrl = activeTab->history[activeTab->historyIdx];
+        wcsncpy(activeTab->url, nextUrl, 511);
+        SetWindowText(g_hEditUrl, wcscmp(nextUrl, L"about:home") == 0 ? L"" : nextUrl);
+        if (wcscmp(nextUrl, L"about:home") != 0) {
+            LaunchUrl(hwnd, nextUrl, FALSE);
+        } else {
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+        }
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Panel Popup de Historial Visual de Sesión
+// ----------------------------------------------------------------------------
+static void ShowHistoryPopup(HWND hwnd, POINT pt) {
+    HMENU hMenu = CreatePopupMenu();
+
+    if (g_sessionHistoryCount == 0) {
+        AppendMenu(hMenu, MF_STRING | MF_GRAYED, 0, L"Sin historial reciente en esta sesión");
+    } else {
+        for (int i = 0; i < g_sessionHistoryCount && i < 15; i++) {
+            wchar_t itemText[128];
+            swprintf(itemText, 128, L"%02d:%02d  %ls",
+                     g_sessionHistory[i].timestamp.wHour,
+                     g_sessionHistory[i].timestamp.wMinute,
+                     g_sessionHistory[i].title);
+            AppendMenu(hMenu, MF_STRING, ID_HIST_START + i, itemText);
+        }
+        AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
+        AppendMenu(hMenu, MF_STRING, IDM_HIST_CLEAR, L"🧹 Limpiar historial de la sesión");
+    }
+
+    AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hMenu, MF_STRING, IDM_HIST_FULL, L"🌐 Ver historial completo en Gecko\tCtrl+H");
+
+    int cmd = TrackPopupMenu(hMenu, TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, NULL);
+    DestroyMenu(hMenu);
+
+    if (cmd >= ID_HIST_START && cmd < ID_HIST_START + g_sessionHistoryCount) {
+        int idx = cmd - ID_HIST_START;
+        NavigateTab(g_activeTabIdx, g_sessionHistory[idx].title, g_sessionHistory[idx].url);
+        SetWindowText(g_hEditUrl, g_sessionHistory[idx].url);
+        LaunchUrl(hwnd, g_sessionHistory[idx].url, FALSE);
+        InvalidateRect(hwnd, NULL, FALSE);
+    } else if (cmd == IDM_HIST_CLEAR) {
+        g_sessionHistoryCount = 0;
+    } else if (cmd == IDM_HIST_FULL) {
+        LaunchUrl(hwnd, L"about:history", FALSE);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Panel Popup de Descargas Rápido con Acceso al Explorador
+// ----------------------------------------------------------------------------
+static void ShowDownloadsPopup(HWND hwnd, POINT pt) {
+    HMENU hMenu = CreatePopupMenu();
+
+    AppendMenu(hMenu, MF_STRING, IDM_DL_FOLDER, L"📁 Abrir carpeta Descargas (Windows Explorer)");
+    AppendMenu(hMenu, MF_STRING, IDM_DL_VIEW,   L"⬇️ Ver descargas en el navegador\tCtrl+J");
+    AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hMenu, MF_STRING, IDM_DL_TRIM,   L"🧹 Liberar memoria RAM del navegador");
+
+    int cmd = TrackPopupMenu(hMenu, TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, NULL);
+    DestroyMenu(hMenu);
+
+    if (cmd == IDM_DL_FOLDER) {
+        ShellExecute(NULL, L"open", L"shell:Downloads", NULL, NULL, SW_SHOWNORMAL);
+    } else if (cmd == IDM_DL_VIEW) {
+        LaunchUrl(hwnd, L"about:downloads", FALSE);
+    } else if (cmd == IDM_DL_TRIM) {
+        EmptyWorkingSet(GetCurrentProcess());
+        MessageBox(hwnd, L"Memoria RAM del contenedor optimizada exitosamente.", L"Waterfox Lite", MB_OK | MB_ICONINFORMATION);
+    }
+}
+
+// ----------------------------------------------------------------------------
 // Mostrar Menú Hamburguesa Nativo con Múltiples Opciones
 // ----------------------------------------------------------------------------
 static void ShowMainMenu(HWND hwnd) {
@@ -1705,7 +1911,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             hwnd, (HMENU)1001, GetModuleHandle(NULL), NULL
         );
         SendMessage(g_hEditUrl, WM_SETFONT, (WPARAM)g_hFontNormal, TRUE);
-        SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar con Google o presiona 1-7 para abrir apps y juegos...");
+        SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar con Google (Ctrl+L) o presiona 1-7 para abrir apps...");
 
         g_hWndMain = hwnd;
         BOOL dark = TRUE;
@@ -2030,40 +2236,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         // 3. Botones de Navegación Atrás / Adelante con Historial Real
-        BrowserTab *activeTab = &g_tabs[g_activeTabIdx];
         if (PtInRect(&g_rcBack, (POINT){ x, y })) {
-            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
-                SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_BACKWARD));
-            } else if (activeTab->historyIdx > 0) {
-                activeTab->historyIdx--;
-                const wchar_t *prevUrl = activeTab->history[activeTab->historyIdx];
-                wcsncpy(activeTab->url, prevUrl, 511);
-                SetWindowText(g_hEditUrl, wcscmp(prevUrl, L"about:home") == 0 ? L"" : prevUrl);
-                if (wcscmp(prevUrl, L"about:home") != 0) {
-                    LaunchUrl(hwnd, prevUrl, FALSE);
-                } else {
-                    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
-                }
-                InvalidateRect(hwnd, NULL, FALSE);
-            }
+            NavigateBack(hwnd);
             return 0;
         }
 
         if (PtInRect(&g_rcFwd, (POINT){ x, y })) {
-            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
-                SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_FORWARD));
-            } else if (activeTab->historyIdx + 1 < activeTab->historyCount) {
-                activeTab->historyIdx++;
-                const wchar_t *nextUrl = activeTab->history[activeTab->historyIdx];
-                wcsncpy(activeTab->url, nextUrl, 511);
-                SetWindowText(g_hEditUrl, wcscmp(nextUrl, L"about:home") == 0 ? L"" : nextUrl);
-                if (wcscmp(nextUrl, L"about:home") != 0) {
-                    LaunchUrl(hwnd, nextUrl, FALSE);
-                } else {
-                    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
-                }
-                InvalidateRect(hwnd, NULL, FALSE);
-            }
+            NavigateForward(hwnd);
             return 0;
         }
 
@@ -2082,35 +2261,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         // 6. Botón Estrella de Marcador ⭐ (Añadir / Eliminar Marcador con Persistencia)
         if (PtInRect(&g_rcStar, (POINT){ x, y })) {
-            const wchar_t *curUrl = g_tabs[g_activeTabIdx].url;
-            if (curUrl && wcscmp(curUrl, L"about:home") != 0 && wcslen(curUrl) > 0) {
-                int foundIdx = -1;
-                for (int i = 0; i < g_bookmarkCount; i++) {
-                    if (wcscmp(g_bookmarks[i].url, curUrl) == 0) {
-                        foundIdx = i;
-                        break;
-                    }
-                }
-                if (foundIdx >= 0) {
-                    for (int j = foundIdx; j < g_bookmarkCount - 1; j++) {
-                        g_bookmarks[j] = g_bookmarks[j + 1];
-                    }
-                    g_bookmarkCount--;
-                    g_isBookmarked = FALSE;
-                    SaveBookmarksToFile();
-                } else if (g_bookmarkCount < MAX_BOOKMARKS) {
-                    wcsncpy(g_bookmarks[g_bookmarkCount].title, g_tabs[g_activeTabIdx].title, 63);
-                    g_bookmarks[g_bookmarkCount].title[63] = L'\0';
-                    wcsncpy(g_bookmarks[g_bookmarkCount].url, curUrl, 511);
-                    g_bookmarks[g_bookmarkCount].url[511] = L'\0';
-                    g_bookmarks[g_bookmarkCount].hIcon = GetTabIcon(curUrl, g_tabs[g_activeTabIdx].title);
-                    g_bookmarks[g_bookmarkCount].resId = 0;
-                    g_bookmarkCount++;
-                    g_isBookmarked = TRUE;
-                    SaveBookmarksToFile();
-                }
-                InvalidateRect(hwnd, NULL, FALSE);
-            }
+            ToggleBookmarkForActiveTab(hwnd);
             return 0;
         }
 
@@ -2128,13 +2279,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         // 8. Botón Recargar ↻
         if (PtInRect(&g_rcReload, (POINT){ x, y })) {
-            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
-                SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_REFRESH));
-            } else if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0) {
-                LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url, FALSE);
-            } else {
-                InvalidateRect(hwnd, NULL, FALSE);
-            }
+            ReloadActiveTab(hwnd);
             return 0;
         }
 
@@ -2194,13 +2339,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
 
         case IDM_BOOKMARKS:
-        case IDM_HISTORY:
-            LaunchUrl(hwnd, L"about:history", FALSE);
+            LaunchUrl(hwnd, L"about:bookmarks", FALSE);
             break;
 
-        case IDM_DOWNLOADS:
-            LaunchUrl(hwnd, L"about:downloads", FALSE);
+        case IDM_HISTORY: {
+            POINT pt = { g_rcMenu.left, g_rcMenu.bottom };
+            ClientToScreen(hwnd, &pt);
+            ShowHistoryPopup(hwnd, pt);
             break;
+        }
+
+        case IDM_DOWNLOADS: {
+            POINT pt = { g_rcMenu.left, g_rcMenu.bottom };
+            ClientToScreen(hwnd, &pt);
+            ShowDownloadsPopup(hwnd, pt);
+            break;
+        }
 
         case IDM_EXTENSIONS:
             LaunchUrl(hwnd, L"about:addons", FALSE);
@@ -2561,6 +2715,53 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             if (isCtrl && (msg.wParam == 'N' || msg.wParam == 'n')) {
                 SendMessage(hwnd, WM_COMMAND, IDM_NEW_WINDOW, 0);
+                continue;
+            }
+
+            // Atajo Ctrl+L o F6: Enfocar y seleccionar todo en la barra de URL / Omnibox
+            if ((isCtrl && (msg.wParam == 'L' || msg.wParam == 'l')) || msg.wParam == VK_F6) {
+                if (g_hEditUrl && IsWindow(g_hEditUrl)) {
+                    SetFocus(g_hEditUrl);
+                    SendMessage(g_hEditUrl, EM_SETSEL, 0, -1);
+                }
+                continue;
+            }
+
+            // Atajo Ctrl+D: Añadir o quitar marcador en la pestaña activa ⭐
+            if (isCtrl && (msg.wParam == 'D' || msg.wParam == 'd')) {
+                ToggleBookmarkForActiveTab(hwnd);
+                continue;
+            }
+
+            // Atajo Ctrl+R o F5: Recargar la página actual ↻
+            if ((isCtrl && (msg.wParam == 'R' || msg.wParam == 'r')) || msg.wParam == VK_F5) {
+                ReloadActiveTab(hwnd);
+                continue;
+            }
+
+            // Atajos Alt+Izquierda y Alt+Derecha: Navegación Atrás / Adelante
+            if ((GetKeyState(VK_MENU) & 0x8000) != 0 && msg.wParam == VK_LEFT) {
+                NavigateBack(hwnd);
+                continue;
+            }
+            if ((GetKeyState(VK_MENU) & 0x8000) != 0 && msg.wParam == VK_RIGHT) {
+                NavigateForward(hwnd);
+                continue;
+            }
+
+            // Atajo Ctrl+H: Abrir panel popup de historial visual
+            if (isCtrl && (msg.wParam == 'H' || msg.wParam == 'h')) {
+                POINT pt = { g_rcMenu.left, g_rcMenu.bottom };
+                ClientToScreen(hwnd, &pt);
+                ShowHistoryPopup(hwnd, pt);
+                continue;
+            }
+
+            // Atajo Ctrl+J: Abrir panel popup de descargas rápido
+            if (isCtrl && (msg.wParam == 'J' || msg.wParam == 'j')) {
+                POINT pt = { g_rcMenu.left, g_rcMenu.bottom };
+                ClientToScreen(hwnd, &pt);
+                ShowDownloadsPopup(hwnd, pt);
                 continue;
             }
 
