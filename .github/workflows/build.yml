@@ -119,27 +119,27 @@ jobs:
           Copy-Item -Path "native_ui\cache\*" -Destination $cacheDist -Force
 
           # 6. Add one-click portable launchers
-          $launcherBat = @"
-@echo off
-title Waterfox Lite (Portable)
-cd /d "%~dp0"
-if exist "WaterfoxLite_NativeUI.exe" (
-    start "" "WaterfoxLite_NativeUI.exe" %*
-) else (
-    start "" "app\waterfox.exe" -profile "profile" -no-remote %*
-)
-exit
-"@
-          Set-Content -Path "WaterfoxLite_Dist\WaterfoxLite.bat" -Value $launcherBat -Encoding ASCII
+          $launcherLines = @(
+            '@echo off',
+            'title Waterfox Lite (Portable)',
+            'cd /d "%~dp0"',
+            'if exist "WaterfoxLite_NativeUI.exe" (',
+            '    start "" "WaterfoxLite_NativeUI.exe" %*',
+            ') else (',
+            '    start "" "app\waterfox.exe" -profile "profile" -no-remote %*',
+            ')',
+            'exit'
+          )
+          Set-Content -Path "WaterfoxLite_Dist\WaterfoxLite.bat" -Value $launcherLines -Encoding ASCII
 
-          $coreLauncherBat = @"
-@echo off
-title Waterfox Lite (Direct Engine)
-cd /d "%~dp0"
-start "" "app\waterfox.exe" -profile "profile" -no-remote %*
-exit
-"@
-          Set-Content -Path "WaterfoxLite_Dist\WaterfoxLite_DirectGecko.bat" -Value $coreLauncherBat -Encoding ASCII
+          $coreLauncherLines = @(
+            '@echo off',
+            'title Waterfox Lite (Direct Engine)',
+            'cd /d "%~dp0"',
+            'start "" "app\waterfox.exe" -profile "profile" -no-remote %*',
+            'exit'
+          )
+          Set-Content -Path "WaterfoxLite_Dist\WaterfoxLite_DirectGecko.bat" -Value $coreLauncherLines -Encoding ASCII
 
           Write-Host "All patches, native C shell, modules, and launchers injected successfully."
 
