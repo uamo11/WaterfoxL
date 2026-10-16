@@ -103,7 +103,7 @@ typedef struct {
 } AppCard;
 
 static AppCard g_apps[] = {
-    { L"1", L"X (Twitter)", L"Sin pantalla negra", L"https://x.com", L"x.bmp", IDB_X, RGB(0, 0, 0), {0}, NULL },
+    { L"1", L"X (Twitter)", L"Sin pantalla negra", L"https://twitter.com", L"x.bmp", IDB_X, RGB(0, 0, 0), {0}, NULL },
     { L"2", L"YT Music", L"Sin lagg / 0% CPU", L"https://music.youtube.com", L"ytm.bmp", IDB_YTM, RGB(220, 30, 30), {0}, NULL },
     { L"3", L"YouTube", L"H.264 por GPU", L"https://www.youtube.com", L"yt.bmp", IDB_YT, RGB(200, 20, 20), {0}, NULL },
     { L"4", L"Facebook", L"Sin biometría / Ligero", L"https://web.facebook.com", L"fb.bmp", IDB_FB, RGB(24, 119, 242), {0}, NULL },
@@ -178,7 +178,7 @@ typedef struct {
 static BookmarkItem g_bookmarks[] = {
     { L"Marcadores", L"action:bookmarks", L"folder.bmp", IDB_FOLDER, NULL, {0} },
     { L"Juegos Web ▾", L"action:games_folder", L"game_folder.bmp", IDB_GAME_FOLDER, NULL, {0} },
-    { L"X", L"https://x.com", L"x.bmp", IDB_X, NULL, {0} },
+    { L"X", L"https://twitter.com", L"x.bmp", IDB_X, NULL, {0} },
     { L"YT Music", L"https://music.youtube.com", L"ytm.bmp", IDB_YTM, NULL, {0} },
     { L"YouTube", L"https://www.youtube.com", L"yt.bmp", IDB_YT, NULL, {0} },
     { L"Facebook", L"https://web.facebook.com", L"fb.bmp", IDB_FB, NULL, {0} },
@@ -235,6 +235,11 @@ static HWND g_hWndMain = NULL;
 static HWND g_hGeckoWnd = NULL;
 static BOOL g_isGeckoDocking = FALSE;
 static int g_dockAttempts = 0;
+static DWORD g_geckoPid = 0;
+static HWND g_hFoundGecko = NULL;
+
+static RECT g_rcWinMin = {0}, g_rcWinMax = {0}, g_rcWinClose = {0};
+static int g_hoveredWinBtn = 0; // 1: Min, 2: Max, 3: Close
 
 // Declaraciones adelantadas
 static void LaunchUrl(HWND hwnd, const wchar_t *url);
@@ -415,13 +420,29 @@ static BOOL IsGameUrl(const wchar_t *url) {
 // Acoplamiento e Incrustación de Ventana Gecko en Contenedor Nativo C
 // ----------------------------------------------------------------------------
 static BOOL CALLBACK EnumGeckoProc(HWND hwnd, LPARAM lParam) {
-    if (IsWindowVisible(hwnd) && GetParent(hwnd) == NULL) {
-        wchar_t className[256];
-        GetClassName(hwnd, className, 256);
-        if (wcscmp(className, L"MozillaWindowClass") == 0) {
-            HWND *pFound = (HWND*)lParam;
-            *pFound = hwnd;
-            return FALSE;
+    if (IsWindowVisible(hwnd)) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (hProc) {
+            wchar_t exeName[MAX_PATH];
+            DWORD size = MAX_PATH;
+            if (QueryFullProcessImageNameW(hProc, 0, exeName, &size)) {
+                wchar_t *leaf = wcsrchr(exeName, L'\\');
+                if (leaf && _wcsicmp(leaf + 1, L"waterfox.exe") == 0) {
+                    wchar_t className[256];
+                    GetClassName(hwnd, className, 256);
+                    if (wcscmp(className, L"MozillaWindowClass") == 0) {
+                        HWND parent = GetParent(hwnd);
+                        if (parent == NULL || parent == g_hWndMain) {
+                            g_hFoundGecko = hwnd;
+                            CloseHandle(hProc);
+                            return FALSE;
+                        }
+                    }
+                }
+            }
+            CloseHandle(hProc);
         }
     }
     return TRUE;
@@ -432,7 +453,7 @@ static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
 
     LONG_PTR style = GetWindowLongPtr(hwndGecko, GWL_STYLE);
     style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_BORDER);
-    style |= WS_CHILD;
+    style |= WS_CHILD | WS_CLIPSIBLINGS;
     SetWindowLongPtr(hwndGecko, GWL_STYLE, style);
     SetParent(hwndGecko, hwndParent);
 
@@ -494,7 +515,7 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
         if (wcsncmp(url, L"-private-window ", 16) == 0) {
             swprintf(args, 1024, L"-profile \"%ls\" -private-window \"%ls\"", profPath, url + 16);
         } else {
-            swprintf(args, 1024, L"-profile \"%ls\" \"%ls\"", profPath, url);
+            swprintf(args, 1024, L"-profile \"%ls\" -url \"%ls\"", profPath, url);
         }
 
         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
@@ -514,7 +535,19 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
             g_hGeckoWnd = NULL;
             g_isGeckoDocking = TRUE;
             g_dockAttempts = 0;
-            ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
+            g_geckoPid = 0;
+
+            wchar_t cmdLine[2048];
+            swprintf(cmdLine, 2048, L"\"%ls\" %ls", binPath, args);
+            STARTUPINFO si = { sizeof(si) };
+            PROCESS_INFORMATION pi = { 0 };
+            if (CreateProcessW(NULL, cmdLine, NULL, NULL, FALSE, 0, NULL, binDir, &si, &pi)) {
+                g_geckoPid = pi.dwProcessId;
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            } else {
+                ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
+            }
             SetTimer(hwnd, TIMER_DOCK_GECKO, 150, NULL);
         }
     } else {
@@ -889,95 +922,102 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     }
 
     // ------------------------------------------------------------------------
-    // 4. Panel Central de la Nueva Pestaña (Home Stage)
+    // 4. Panel Central de la Nueva Pestaña (Home Stage) - Solo si Gecko no está activo
     // ------------------------------------------------------------------------
-    int centerY = currentY + 20;
+    if (!(g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd))) {
+        int centerY = currentY + 20;
 
-    if (g_hBmpWaterfox) {
-        DrawIconBmp(memDC, g_hBmpWaterfox, (width - 48) / 2, centerY, 48, 48);
-        centerY += 52;
-    }
-
-    SelectObject(memDC, g_hFontTitle);
-    SetTextColor(memDC, COLOR_TEXT);
-    RECT titleRect = { 0, centerY, width, centerY + 32 };
-    DrawText(memDC, L"Waterfox Lite (Native C Theme)", -1, &titleRect, DT_SINGLELINE | DT_CENTER);
-
-    SelectObject(memDC, g_hFontSmall);
-    SetTextColor(memDC, COLOR_ACCENT);
-    RECT badgeRect = { 0, centerY + 34, width, centerY + 54 };
-    DrawText(memDC, L"⚡ Motor Ultra-Lite nativo en C | Colección WASM/WebGL | Intel Pentium G620 & HD Graphics", -1, &badgeRect, DT_SINGLELINE | DT_CENTER);
-
-    // ------------------------------------------------------------------------
-    // 5. Cuadrícula Responsiva de Accesos Directos (7 Tarjetas con Iconos en Caché)
-    // ------------------------------------------------------------------------
-    int gridStartY = centerY + 64;
-    int cols = (width >= 1060) ? 7 : 4;
-    int cardWidth = (cols == 7) ? 134 : 180;
-    int cardHeight = (cols == 7) ? 115 : 100;
-    int cardGapX = 12;
-    int cardGapY = 12;
-
-    for (int i = 0; i < (int)NUM_APPS; i++) {
-        int r = i / cols;
-        int c = i % cols;
-
-        int itemsInThisRow = (r == 0) ? (cols == 7 ? 7 : 4) : (NUM_APPS - 4);
-        int totalRowWidth = (itemsInThisRow * cardWidth) + ((itemsInThisRow - 1) * cardGapX);
-        int rowStartX = (width - totalRowWidth) / 2;
-        if (rowStartX < 12) rowStartX = 12;
-
-        int x = rowStartX + c * (cardWidth + cardGapX);
-        int y = gridStartY + r * (cardHeight + cardGapY);
-
-        g_apps[i].rect.left = x;
-        g_apps[i].rect.top = y;
-        g_apps[i].rect.right = x + cardWidth;
-        g_apps[i].rect.bottom = y + cardHeight;
-
-        BOOL isHovered = (i == g_hoveredApp);
-        COLORREF bg = isHovered ? COLOR_CARD_HOVER : COLOR_CARD;
-        COLORREF border = isHovered ? COLOR_ACCENT : COLOR_BORDER;
-        DrawDarkRect(memDC, &g_apps[i].rect, bg, border, 12);
-
-        // Badge de tecla numérica [1..7]
-        RECT keyBadge = { g_apps[i].rect.right - 22, g_apps[i].rect.top + 6, g_apps[i].rect.right - 6, g_apps[i].rect.top + 22 };
-        DrawDarkRect(memDC, &keyBadge, RGB(35, 42, 52), COLOR_BORDER, 4);
-        SelectObject(memDC, g_hFontSmall);
-        SetTextColor(memDC, COLOR_TEXT_MUTED);
-        DrawText(memDC, g_apps[i].key, -1, &keyBadge, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-
-        // Icono desde Caché en Disco (BMP)
-        int iconX = x + (cardWidth - 32) / 2;
-        int iconY = y + 12;
-        if (g_apps[i].hCachedBmp) {
-            DrawIconBmp(memDC, g_apps[i].hCachedBmp, iconX, iconY, 32, 32);
-        } else {
-            RECT fallbackBox = { iconX, iconY, iconX + 32, iconY + 32 };
-            DrawDarkRect(memDC, &fallbackBox, g_apps[i].fallbackColor, COLOR_BORDER, 8);
+        if (g_hBmpWaterfox) {
+            DrawIconBmp(memDC, g_hBmpWaterfox, (width - 48) / 2, centerY, 48, 48);
+            centerY += 52;
         }
 
-        // Nombre de la App / Juego
-        RECT nameRect = { x + 4, y + 50, x + cardWidth - 4, y + 70 };
+        SelectObject(memDC, g_hFontTitle);
         SetTextColor(memDC, COLOR_TEXT);
-        SelectObject(memDC, g_hFontBold);
-        DrawText(memDC, g_apps[i].name, -1, &nameRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        RECT titleRect = { 0, centerY, width, centerY + 32 };
+        DrawText(memDC, L"Waterfox Lite (Native C Theme)", -1, &titleRect, DT_SINGLELINE | DT_CENTER);
 
-        // Descripción de optimización
-        RECT descRect = { x + 4, y + 72, x + cardWidth - 4, y + 94 };
-        SetTextColor(memDC, COLOR_TEXT_MUTED);
         SelectObject(memDC, g_hFontSmall);
-        DrawText(memDC, g_apps[i].desc, -1, &descRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        SetTextColor(memDC, COLOR_ACCENT);
+        RECT badgeRect = { 0, centerY + 34, width, centerY + 54 };
+        DrawText(memDC, L"⚡ Motor Ultra-Lite nativo en C | Colección WASM/WebGL | Intel Pentium G620 & HD Graphics", -1, &badgeRect, DT_SINGLELINE | DT_CENTER);
+
+        // ------------------------------------------------------------------------
+        // 5. Cuadrícula Responsiva de Accesos Directos (7 Tarjetas con Iconos en Caché)
+        // ------------------------------------------------------------------------
+        int gridStartY = centerY + 64;
+        int cols = (width >= 1060) ? 7 : 4;
+        int cardWidth = (cols == 7) ? 134 : 180;
+        int cardHeight = (cols == 7) ? 115 : 100;
+        int cardGapX = 12;
+        int cardGapY = 12;
+
+        for (int i = 0; i < (int)NUM_APPS; i++) {
+            int r = i / cols;
+            int c = i % cols;
+
+            int itemsInThisRow = (r == 0) ? (cols == 7 ? 7 : 4) : (NUM_APPS - 4);
+            int totalRowWidth = (itemsInThisRow * cardWidth) + ((itemsInThisRow - 1) * cardGapX);
+            int rowStartX = (width - totalRowWidth) / 2;
+            if (rowStartX < 12) rowStartX = 12;
+
+            int x = rowStartX + c * (cardWidth + cardGapX);
+            int y = gridStartY + r * (cardHeight + cardGapY);
+
+            g_apps[i].rect.left = x;
+            g_apps[i].rect.top = y;
+            g_apps[i].rect.right = x + cardWidth;
+            g_apps[i].rect.bottom = y + cardHeight;
+
+            BOOL isHovered = (i == g_hoveredApp);
+            COLORREF bg = isHovered ? COLOR_CARD_HOVER : COLOR_CARD;
+            COLORREF border = isHovered ? COLOR_ACCENT : COLOR_BORDER;
+            DrawDarkRect(memDC, &g_apps[i].rect, bg, border, 12);
+
+            // Badge de tecla numérica [1..7]
+            RECT keyBadge = { g_apps[i].rect.right - 22, g_apps[i].rect.top + 6, g_apps[i].rect.right - 6, g_apps[i].rect.top + 22 };
+            DrawDarkRect(memDC, &keyBadge, RGB(35, 42, 52), COLOR_BORDER, 4);
+            SelectObject(memDC, g_hFontSmall);
+            SetTextColor(memDC, COLOR_TEXT_MUTED);
+            DrawText(memDC, g_apps[i].key, -1, &keyBadge, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+            // Icono desde Caché en Disco (BMP)
+            int iconX = x + (cardWidth - 32) / 2;
+            int iconY = y + 12;
+            if (g_apps[i].hCachedBmp) {
+                DrawIconBmp(memDC, g_apps[i].hCachedBmp, iconX, iconY, 32, 32);
+            } else {
+                RECT fallbackBox = { iconX, iconY, iconX + 32, iconY + 32 };
+                DrawDarkRect(memDC, &fallbackBox, g_apps[i].fallbackColor, COLOR_BORDER, 8);
+            }
+
+            // Nombre de la App / Juego
+            RECT nameRect = { x + 4, y + 50, x + cardWidth - 4, y + 70 };
+            SetTextColor(memDC, COLOR_TEXT);
+            SelectObject(memDC, g_hFontBold);
+            DrawText(memDC, g_apps[i].name, -1, &nameRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+            // Descripción de optimización
+            RECT descRect = { x + 4, y + 72, x + cardWidth - 4, y + 94 };
+            SetTextColor(memDC, COLOR_TEXT_MUTED);
+            SelectObject(memDC, g_hFontSmall);
+            DrawText(memDC, g_apps[i].desc, -1, &descRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        }
     }
 
     // ------------------------------------------------------------------------
-    // 6. Barra de Estado Inferior con Consumo Real de RAM
+    // 6. Barra de Estado Inferior con Consumo Real de RAM y Botones de Ventana
     // ------------------------------------------------------------------------
     double ramMB = GetProcessRAM_MB();
     RECT footerRect = { 0, height - 34, width, height };
     HBRUSH hFooterBrush = CreateSolidBrush(COLOR_TAB_STRIP);
     FillRect(memDC, &footerRect, hFooterBrush);
     DeleteObject(hFooterBrush);
+
+    RECT footerBorder = { 0, height - 34, width, height - 33 };
+    HBRUSH hBorderBrush = CreateSolidBrush(COLOR_BORDER);
+    FillRect(memDC, &footerBorder, hBorderBrush);
+    DeleteObject(hBorderBrush);
 
     SelectObject(memDC, g_hFontSmall);
     SetTextColor(memDC, COLOR_GREEN);
@@ -988,7 +1028,61 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     } else {
         swprintf(ramText, 256, L"● RAM en Home: %.2f MB  |  CPU: 0.0%%  |  UI 100%% en C Nativo  |  24 Juegos Web en Carpeta  |  Atajos: Teclas 1-7", ramMB);
     }
-    DrawText(memDC, ramText, -1, &footerRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+    RECT ramRect = { 12, height - 34, width - 110, height };
+    DrawText(memDC, ramText, -1, &ramRect, DT_SINGLELINE | DT_LEFT | DT_VCENTER);
+
+    // Botones de Control de Ventana en la Barra Inferior (Minimizar, Maximizar, Cerrar)
+    int btnW = 28;
+    int btnH = 22;
+    int btnY = height - 28;
+
+    // Cerrar (✕)
+    g_rcWinClose.right  = width - 8;
+    g_rcWinClose.left   = g_rcWinClose.right - btnW;
+    g_rcWinClose.top    = btnY;
+    g_rcWinClose.bottom = btnY + btnH;
+
+    // Maximizar / Restaurar (▢ o ⧉)
+    g_rcWinMax.right   = g_rcWinClose.left - 4;
+    g_rcWinMax.left    = g_rcWinMax.right - btnW;
+    g_rcWinMax.top     = btnY;
+    g_rcWinMax.bottom  = btnY + btnH;
+
+    // Minimizar (–)
+    g_rcWinMin.right   = g_rcWinMax.left - 4;
+    g_rcWinMin.left    = g_rcWinMin.right - btnW;
+    g_rcWinMin.top     = btnY;
+    g_rcWinMin.bottom  = btnY + btnH;
+
+    // 1. Minimizar
+    COLORREF minBg = (g_hoveredWinBtn == 1) ? COLOR_CARD_HOVER : RGB(25, 30, 38);
+    DrawDarkRect(memDC, &g_rcWinMin, minBg, COLOR_BORDER, 4);
+    SelectObject(memDC, g_hFontBold);
+    SetTextColor(memDC, COLOR_TEXT);
+    DrawText(memDC, L"–", -1, &g_rcWinMin, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    // 2. Maximizar / Restaurar
+    COLORREF maxBg = (g_hoveredWinBtn == 2) ? COLOR_CARD_HOVER : RGB(25, 30, 38);
+    DrawDarkRect(memDC, &g_rcWinMax, maxBg, COLOR_BORDER, 4);
+    SelectObject(memDC, g_hFontNormal);
+    SetTextColor(memDC, COLOR_TEXT);
+    DrawText(memDC, (hwnd && IsZoomed(hwnd)) ? L"⧉" : L"▢", -1, &g_rcWinMax, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    // 3. Cerrar (Al pasar el cursor cambia a rojo vibrante)
+    COLORREF closeBg = (g_hoveredWinBtn == 3) ? RGB(232, 17, 35) : RGB(25, 30, 38);
+    COLORREF closeBorder = (g_hoveredWinBtn == 3) ? RGB(248, 81, 73) : COLOR_BORDER;
+    DrawDarkRect(memDC, &g_rcWinClose, closeBg, closeBorder, 4);
+    SelectObject(memDC, g_hFontNormal);
+    SetTextColor(memDC, COLOR_TEXT);
+    DrawText(memDC, L"✕", -1, &g_rcWinClose, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    // Borde exterior oscuro elegante de 1 píxel
+    HPEN hBorderPen = CreatePen(PS_SOLID, 1, COLOR_BORDER);
+    HGDIOBJ oldPen = SelectObject(memDC, hBorderPen);
+    SelectObject(memDC, GetStockObject(HOLLOW_BRUSH));
+    Rectangle(memDC, 0, 0, width, height);
+    SelectObject(memDC, oldPen);
+    DeleteObject(hBorderPen);
 
     BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
 
@@ -1163,15 +1257,75 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar en la web o presiona 1-7 para abrir apps y juegos...");
 
         g_hWndMain = hwnd;
+        BOOL dark = TRUE;
+        DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
         SetTimer(hwnd, TIMER_MEM_TRIM, 1000, NULL);
         return 0;
     }
 
+    case WM_NCCALCSIZE: {
+        if (wParam) {
+            return 0;
+        }
+        break;
+    }
+
     case WM_GETMINMAXINFO: {
         LPMINMAXINFO lpMMI = (LPMINMAXINFO)lParam;
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = { sizeof(mi) };
+        if (GetMonitorInfo(hMon, &mi)) {
+            lpMMI->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+            lpMMI->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+            lpMMI->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+            lpMMI->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+        }
         lpMMI->ptMinTrackSize.x = 800;
         lpMMI->ptMinTrackSize.y = 500;
         return 0;
+    }
+
+    case WM_NCHITTEST: {
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        RECT rcWindow;
+        GetWindowRect(hwnd, &rcWindow);
+
+        // Si la ventana no está maximizada, permitir redimensionar por los bordes
+        if (!IsZoomed(hwnd)) {
+            int border = 4;
+            if (pt.y < rcWindow.top + border) {
+                if (pt.x < rcWindow.left + border) return HTTOPLEFT;
+                if (pt.x >= rcWindow.right - border) return HTTOPRIGHT;
+                return HTTOP;
+            }
+            if (pt.y >= rcWindow.bottom - border) {
+                if (pt.x < rcWindow.left + border) return HTBOTTOMLEFT;
+                if (pt.x >= rcWindow.right - border) return HTBOTTOMRIGHT;
+                return HTBOTTOM;
+            }
+            if (pt.x < rcWindow.left + border) return HTLEFT;
+            if (pt.x >= rcWindow.right - border) return HTRIGHT;
+        }
+
+        // Arrastre fluido de la ventana desde la barra superior de pestañas (área vacía)
+        POINT clientPt = pt;
+        ScreenToClient(hwnd, &clientPt);
+        if (clientPt.y >= 0 && clientPt.y < 40) {
+            BOOL onInteractive = FALSE;
+            for (int i = 0; i < g_tabCount; i++) {
+                if (PtInRect(&g_tabs[i].rect, clientPt)) {
+                    onInteractive = TRUE;
+                    break;
+                }
+            }
+            if (PtInRect(&g_rcNewTab, clientPt)) {
+                onInteractive = TRUE;
+            }
+            if (!onInteractive) {
+                return HTCAPTION;
+            }
+        }
+        return HTCLIENT;
     }
 
     case WM_SIZE: {
@@ -1209,11 +1363,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         if (wParam == TIMER_DOCK_GECKO) {
             g_dockAttempts++;
-            HWND hFound = NULL;
-            EnumWindows(EnumGeckoProc, (LPARAM)&hFound);
-            if (hFound) {
+            g_hFoundGecko = NULL;
+            EnumWindows(EnumGeckoProc, (LPARAM)g_geckoPid);
+            if (g_hFoundGecko) {
                 KillTimer(hwnd, TIMER_DOCK_GECKO);
-                DockGeckoWindow(hwnd, hFound);
+                DockGeckoWindow(hwnd, g_hFoundGecko);
                 InvalidateRect(hwnd, NULL, FALSE);
             } else if (g_dockAttempts >= 60) {
                 KillTimer(hwnd, TIMER_DOCK_GECKO);
@@ -1231,11 +1385,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int oldHoverTab = g_hoveredTab;
         int oldHoverBm  = g_hoveredBookmark;
         int oldHoverBtn = g_hoveredBtn;
+        int oldHoverWinBtn = g_hoveredWinBtn;
 
         g_hoveredApp = -1;
         g_hoveredTab = -1;
         g_hoveredBookmark = -1;
         g_hoveredBtn = 0;
+        g_hoveredWinBtn = 0;
 
         for (int i = 0; i < (int)NUM_APPS; i++) {
             if (PtInRect(&g_apps[i].rect, (POINT){ x, y })) {
@@ -1269,8 +1425,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         else if (PtInRect(&g_rcStar, (POINT){ x, y })) g_hoveredBtn = 7;
         else if (PtInRect(&g_rcNewTab, (POINT){ x, y })) g_hoveredBtn = 8;
 
-        if (oldHoverApp != g_hoveredApp || oldHoverTab != g_hoveredTab || oldHoverBm != g_hoveredBookmark || oldHoverBtn != g_hoveredBtn) {
-            InvalidateRect(hwnd, NULL, FALSE);
+        // Botones de Ventana en la Barra Inferior
+        if (PtInRect(&g_rcWinMin, (POINT){ x, y })) g_hoveredWinBtn = 1;
+        else if (PtInRect(&g_rcWinMax, (POINT){ x, y })) g_hoveredWinBtn = 2;
+        else if (PtInRect(&g_rcWinClose, (POINT){ x, y })) g_hoveredWinBtn = 3;
+
+        if (oldHoverApp != g_hoveredApp || oldHoverTab != g_hoveredTab || oldHoverBm != g_hoveredBookmark || oldHoverBtn != g_hoveredBtn || oldHoverWinBtn != g_hoveredWinBtn) {
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+                RECT clientRect;
+                GetClientRect(hwnd, &clientRect);
+                RECT rcTop = { 0, 0, clientRect.right, g_showBookmarksBar ? 114 : 84 };
+                RECT rcBottom = { 0, clientRect.bottom - 34, clientRect.right, clientRect.bottom };
+                InvalidateRect(hwnd, &rcTop, FALSE);
+                InvalidateRect(hwnd, &rcBottom, FALSE);
+            } else {
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
         }
 
         TRACKMOUSEEVENT tme;
@@ -1286,13 +1456,41 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_hoveredTab = -1;
         g_hoveredBookmark = -1;
         g_hoveredBtn = 0;
-        InvalidateRect(hwnd, NULL, FALSE);
+        g_hoveredWinBtn = 0;
+        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
+            RECT clientRect;
+            GetClientRect(hwnd, &clientRect);
+            RECT rcTop = { 0, 0, clientRect.right, g_showBookmarksBar ? 114 : 84 };
+            RECT rcBottom = { 0, clientRect.bottom - 34, clientRect.right, clientRect.bottom };
+            InvalidateRect(hwnd, &rcTop, FALSE);
+            InvalidateRect(hwnd, &rcBottom, FALSE);
+        } else {
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
         return 0;
     }
 
     case WM_LBUTTONDOWN: {
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
+
+        // 0. Botones de Control de Ventana en la Barra Inferior (Min, Max, Close)
+        if (PtInRect(&g_rcWinMin, (POINT){ x, y })) {
+            ShowWindow(hwnd, SW_MINIMIZE);
+            return 0;
+        }
+        if (PtInRect(&g_rcWinMax, (POINT){ x, y })) {
+            if (IsZoomed(hwnd)) {
+                ShowWindow(hwnd, SW_RESTORE);
+            } else {
+                ShowWindow(hwnd, SW_MAXIMIZE);
+            }
+            return 0;
+        }
+        if (PtInRect(&g_rcWinClose, (POINT){ x, y })) {
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            return 0;
+        }
 
         // 1. Pestañas
         for (int i = 0; i < g_tabCount; i++) {
@@ -1591,7 +1789,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = NULL;
     wc.lpszClassName = L"WaterfoxLiteNativeTheme";
     wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APPICON));
     wc.hIconSm = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, 16, 16, 0);
@@ -1601,10 +1799,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (!RegisterClassEx(&wc)) return 1;
 
     HWND hwnd = CreateWindowEx(
-        0,
+        WS_EX_APPWINDOW,
         L"WaterfoxLiteNativeTheme",
         L"Waterfox Lite - Native Theme (C)",
-        WS_OVERLAPPEDWINDOW,
+        WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 1080, 680,
         NULL, NULL, hInstance, NULL
     );

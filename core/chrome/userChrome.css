@@ -3,27 +3,28 @@
    Ocultar chrome nativo de Gecko: La UI completa se gestiona en C Nativo (Win32)
    ========================================================================== */
 
-/* Ocultar toda la barra de navegación, pestañas y herramientas de Gecko */
-#navigator-toolbox,
-#titlebar,
-#TabsToolbar,
-#nav-bar,
-#PersonalToolbar,
-#status-bar {
-  display: none !important;
+#navigator-toolbox {
   visibility: collapse !important;
   height: 0px !important;
   min-height: 0px !important;
   max-height: 0px !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
-/* El contenido web ocupa el 100% del área del contenedor sin bordes */
-#main-window,
-#browser,
-#appcontent,
-.browserContainer,
-browser {
+#titlebar {
+  visibility: collapse !important;
+  height: 0px !important;
+}
+
+#statuspanel,
+#statuspanel-label {
+  display: none !important;
+  opacity: 0 !important;
+}
+
+#main-window {
   border: none !important;
   box-shadow: none !important;
-  background-color: #0d1117 !important;
 }

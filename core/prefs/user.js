@@ -4,16 +4,13 @@
 // ============================================================================
 
 // ----------------------------------------------------------------------------
-// 1. SOLUCIÓN AL PROBLEMA DE PANTALLA EN NEGRO EN X (TWITTER) Y WEBGPU/CANVAS
+// 1. COMPOSICIÓN GRÁFICA Y WEBRENDER OPTIMIZADO PARA INTEL HD GRAPHICS
 // ----------------------------------------------------------------------------
-user_pref("gfx.webrender.all", false);
-user_pref("gfx.webrender.software", true);
-user_pref("gfx.webrender.software.opengl", false);
-user_pref("gfx.canvas.accelerated", false);
-user_pref("layers.acceleration.disabled", true);
-user_pref("layers.gpu-process.enabled", false);
-user_pref("layers.gpu-process.force-enabled", false);
-user_pref("gfx.direct2d.disabled", true);
+user_pref("gfx.webrender.all", true);
+user_pref("gfx.webrender.software", false);
+user_pref("gfx.canvas.accelerated", true);
+user_pref("layers.gpu-process.enabled", true);
+user_pref("gfx.direct2d.disabled", false);
 user_pref("dom.webgpu.enabled", false);
 user_pref("webgl.disabled", false);
 user_pref("webgl.force-enabled", false);
@@ -70,7 +67,9 @@ user_pref("network.http.max-persistent-connections-per-server", 6);
 user_pref("network.http.max-urgent-start-connections", 3);
 user_pref("network.ssl_tokens_cache_capacity", 2048);
 user_pref("network.dns.disableIPv6", true);
-user_pref("network.http.http3.enable", true);
+user_pref("network.http.http3.enable", false);
+user_pref("dom.serviceWorkers.enabled", true);
+user_pref("dom.indexedDB.enabled", true);
 
 // ----------------------------------------------------------------------------
 // 6. SCROLL CINEMÁTICO DE BAJO CONSUMO (SIN CARGA GPU)
@@ -127,10 +126,10 @@ user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
 // ----------------------------------------------------------------------------
 // 11. PÁGINA DE INICIO Y NUEVA VENTANA/PESTAÑA CON ACCESO DIRECTO A APPS REA
 // ----------------------------------------------------------------------------
-user_pref("browser.startup.homepage", "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html");
+user_pref("browser.startup.homepage", "about:blank");
 user_pref("browser.startup.page", 1);
-user_pref("browser.newtabpage.enabled", true);
-user_pref("browser.newtab.url", "file:///C:/Users/Usuario/Documents/REA/Waterfox%20Lite/core/pages/newtab.html");
+user_pref("browser.newtabpage.enabled", false);
+user_pref("browser.newtab.url", "about:blank");
 
 // ----------------------------------------------------------------------------
 // 12. SOPORTE DE MEMORIA COMPARTIDA (FIVEPLAY / GTA V WEB)
