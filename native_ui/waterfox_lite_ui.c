@@ -641,44 +641,6 @@ static void TerminateOrphanedGeckoProcesses() {
     }
 }
 
-// ----------------------------------------------------------------------------
-// Localizador de Perfil del Usuario (Mantiene inicio de sesión y uBlock)
-// ----------------------------------------------------------------------------
-static BOOL FindUserProfile(wchar_t *outProf, DWORD maxProf) {
-    wchar_t appData[MAX_PATH];
-    if (GetEnvironmentVariableW(L"APPDATA", appData, MAX_PATH) > 0) {
-        // 1. Probar perfil principal activo detectado con sesiones de YT Music y uBlock
-        wchar_t candidate[MAX_PATH];
-        swprintf(candidate, MAX_PATH, L"%ls\\Waterfox\\Profiles\\3dlgxf5y.default-release-1", appData);
-        if (GetFileAttributesW(candidate) != INVALID_FILE_ATTRIBUTES) {
-            GetFullPathNameW(candidate, maxProf, outProf, NULL);
-            return TRUE;
-        }
-
-        // 2. Buscar en APPDATA\Waterfox\Profiles cualquier perfil con cookies y extensiones
-        wchar_t searchPattern[MAX_PATH];
-        swprintf(searchPattern, MAX_PATH, L"%ls\\Waterfox\\Profiles\\*", appData);
-        WIN32_FIND_DATAW fd;
-        HANDLE hFind = FindFirstFileW(searchPattern, &fd);
-        if (hFind != INVALID_HANDLE_VALUE) {
-            do {
-                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
-                    wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
-                    wchar_t checkPath[MAX_PATH];
-                    swprintf(checkPath, MAX_PATH, L"%ls\\Waterfox\\Profiles\\%ls\\cookies.sqlite", appData, fd.cFileName);
-                    if (GetFileAttributesW(checkPath) != INVALID_FILE_ATTRIBUTES) {
-                        swprintf(candidate, MAX_PATH, L"%ls\\Waterfox\\Profiles\\%ls", appData, fd.cFileName);
-                        GetFullPathNameW(candidate, maxProf, outProf, NULL);
-                        FindClose(hFind);
-                        return TRUE;
-                    }
-                }
-            } while (FindNextFileW(hFind, &fd));
-            FindClose(hFind);
-        }
-    }
-    return FALSE;
-}
 
 // ----------------------------------------------------------------------------
 // Localizador Inteligente de Waterfox Lite con Rutas Canónicas
