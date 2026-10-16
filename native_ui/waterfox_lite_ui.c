@@ -87,6 +87,8 @@ typedef struct {
     int historyIdx;
     RECT rect;
     RECT closeRect;
+    RECT audioRect;
+    BOOL isMuted;
     BOOL isActive;
     BOOL isWeb;
     int geckoTabIdx;
@@ -168,17 +170,17 @@ static WebGameItem g_gamesShooters[] = {
 #define NUM_GAMES_SHOOTERS (sizeof(g_gamesShooters) / sizeof(g_gamesShooters[0]))
 
 // Marcadores Rápidos para la barra de marcadores
-// Marcadores Rápidos para la barra de marcadores
+#define MAX_BOOKMARKS 32
 typedef struct {
-    const wchar_t *title;
-    const wchar_t *url;
-    const wchar_t *bmpName;
+    wchar_t title[64];
+    wchar_t url[512];
+    wchar_t bmpName[32];
     int resId;
     HBITMAP hIcon;
     RECT rect;
 } BookmarkItem;
 
-static BookmarkItem g_bookmarks[] = {
+static BookmarkItem g_bookmarks[MAX_BOOKMARKS] = {
     { L"Marcadores", L"action:bookmarks", L"folder.bmp", IDB_FOLDER, NULL, {0} },
     { L"Juegos Web ▾", L"action:games_folder", L"game_folder.bmp", IDB_GAME_FOLDER, NULL, {0} },
     { L"X", L"https://twitter.com", L"x.bmp", IDB_X, NULL, {0} },
@@ -188,7 +190,8 @@ static BookmarkItem g_bookmarks[] = {
     { L"Gemini", L"https://gemini.google.com", L"gemini.bmp", IDB_GEMINI, NULL, {0} },
     { L"GTA V Web", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0", L"gta.bmp", IDB_GTA, NULL, {0} }
 };
-#define NUM_BOOKMARKS (sizeof(g_bookmarks) / sizeof(g_bookmarks[0]))
+static int g_bookmarkCount = 8;
+#define NUM_BOOKMARKS g_bookmarkCount
 
 // Variables Globales de Interfaz
 static BrowserTab g_tabs[MAX_TABS];
@@ -220,6 +223,10 @@ static RECT g_rcBookmarksBar;
 
 #define TIMER_MEM_TRIM    1
 #define TIMER_DOCK_GECKO  2
+#define TIMER_PROGRESS    3
+
+static int g_loadProgress = 0;
+static BOOL g_isLoading = FALSE;
 
 #ifndef APPCOMMAND_BROWSER_BACKWARD
 #define APPCOMMAND_BROWSER_BACKWARD 1
@@ -352,8 +359,130 @@ static void FreeIconCache() {
 }
 
 // ----------------------------------------------------------------------------
-// Codificación de Búsqueda URL (Google Search)
+// Obtención de Icono Dinámico según Dominio / Título (Favicons en Pestañas)
 // ----------------------------------------------------------------------------
+static HBITMAP GetTabIcon(const wchar_t *url, const wchar_t *title) {
+    if (url) {
+        if (wcsstr(url, L"music.youtube.com")) return g_apps[1].hCachedBmp;
+        if (wcsstr(url, L"youtube.com") || wcsstr(url, L"youtu.be")) return g_apps[2].hCachedBmp;
+        if (wcsstr(url, L"x.com") || wcsstr(url, L"twitter.com")) return g_apps[0].hCachedBmp;
+        if (wcsstr(url, L"facebook.com")) return g_apps[3].hCachedBmp;
+        if (wcsstr(url, L"gemini.google.com")) return g_apps[4].hCachedBmp;
+        if (wcsstr(url, L"fiveplay.lol") || wcsstr(url, L"gta")) return g_apps[5].hCachedBmp;
+        if (wcsstr(url, L"action:games_folder")) return g_hBmpGameFolder;
+        if (wcsstr(url, L"action:bookmarks")) return g_hBmpFolder;
+    }
+    if (title) {
+        if (wcsstr(title, L"YouTube Music") || wcsstr(title, L"YT Music")) return g_apps[1].hCachedBmp;
+        if (wcsstr(title, L"YouTube")) return g_apps[2].hCachedBmp;
+        if (wcsstr(title, L" / X") || wcsstr(title, L"Twitter")) return g_apps[0].hCachedBmp;
+        if (wcsstr(title, L"Facebook")) return g_apps[3].hCachedBmp;
+        if (wcsstr(title, L"Gemini")) return g_apps[4].hCachedBmp;
+    }
+    return g_hBmpWaterfox;
+}
+
+static void UpdateBookmarkStatus() {
+    if (g_activeTabIdx < 0 || g_activeTabIdx >= g_tabCount) {
+        g_isBookmarked = FALSE;
+        return;
+    }
+    const wchar_t *curUrl = g_tabs[g_activeTabIdx].url;
+    if (!curUrl || wcscmp(curUrl, L"about:home") == 0 || wcslen(curUrl) == 0) {
+        g_isBookmarked = FALSE;
+        return;
+    }
+    for (int i = 0; i < g_bookmarkCount; i++) {
+        if (wcscmp(g_bookmarks[i].url, curUrl) == 0) {
+            g_isBookmarked = TRUE;
+            return;
+        }
+    }
+    g_isBookmarked = FALSE;
+}
+
+static void GetBookmarksFilePath(wchar_t *outPath, DWORD maxLen) {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+    wchar_t *slash = wcsrchr(exePath, L'\\');
+    if (slash) *slash = L'\0';
+    swprintf(outPath, maxLen, L"%ls\\WaterfoxLite_Bookmarks.json", exePath);
+}
+
+static void SaveBookmarksToFile() {
+    wchar_t path[MAX_PATH];
+    GetBookmarksFilePath(path, MAX_PATH);
+    FILE *f = _wfopen(path, L"w, ccs=UTF-8");
+    if (!f) return;
+    fwprintf(f, L"[\n");
+    for (int i = 0; i < g_bookmarkCount; i++) {
+        fwprintf(f, L"  {\n");
+        fwprintf(f, L"    \"title\": \"%ls\",\n", g_bookmarks[i].title);
+        fwprintf(f, L"    \"url\": \"%ls\"\n", g_bookmarks[i].url);
+        fwprintf(f, L"  }%ls\n", (i == g_bookmarkCount - 1) ? L"" : L",");
+    }
+    fwprintf(f, L"]\n");
+    fclose(f);
+}
+
+static void LoadBookmarksFromFile() {
+    wchar_t path[MAX_PATH];
+    GetBookmarksFilePath(path, MAX_PATH);
+    FILE *f = _wfopen(path, L"r, ccs=UTF-8");
+    if (!f) return;
+
+    wchar_t line[1024];
+    wchar_t curTitle[64] = {0};
+    wchar_t curUrl[512] = {0};
+    int loadedCount = 0;
+
+    while (fgetws(line, 1024, f)) {
+        wchar_t *pTitle = wcsstr(line, L"\"title\":");
+        if (pTitle) {
+            wchar_t *q1 = wcschr(pTitle + 8, L'\"');
+            if (q1) {
+                wchar_t *q2 = wcschr(q1 + 1, L'\"');
+                if (q2) {
+                    size_t len = q2 - (q1 + 1);
+                    if (len >= 64) len = 63;
+                    wcsncpy(curTitle, q1 + 1, len);
+                    curTitle[len] = L'\0';
+                }
+            }
+        }
+        wchar_t *pUrl = wcsstr(line, L"\"url\":");
+        if (pUrl) {
+            wchar_t *q1 = wcschr(pUrl + 6, L'\"');
+            if (q1) {
+                wchar_t *q2 = wcschr(q1 + 1, L'\"');
+                if (q2) {
+                    size_t len = q2 - (q1 + 1);
+                    if (len >= 512) len = 511;
+                    wcsncpy(curUrl, q1 + 1, len);
+                    curUrl[len] = L'\0';
+                }
+            }
+        }
+        if (wcschr(line, L'}') && wcslen(curTitle) > 0 && wcslen(curUrl) > 0) {
+            if (loadedCount < MAX_BOOKMARKS) {
+                wcsncpy(g_bookmarks[loadedCount].title, curTitle, 63);
+                g_bookmarks[loadedCount].title[63] = L'\0';
+                wcsncpy(g_bookmarks[loadedCount].url, curUrl, 511);
+                g_bookmarks[loadedCount].url[511] = L'\0';
+                g_bookmarks[loadedCount].hIcon = GetTabIcon(curUrl, curTitle);
+                g_bookmarks[loadedCount].resId = 0;
+                loadedCount++;
+            }
+            curTitle[0] = L'\0';
+            curUrl[0] = L'\0';
+        }
+    }
+    fclose(f);
+    if (loadedCount > 0) {
+        g_bookmarkCount = loadedCount;
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Codificación de Búsqueda URL (Google Search con UTF-8 Percent-Encoding RFC 3986)
 // ----------------------------------------------------------------------------
@@ -597,8 +726,10 @@ static void CALLBACK GeckoTitleWinEventProc(HWINEVENTHOOK hWinEventHook, DWORD e
                 if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0 && wcslen(titleBuf) > 0) {
                     wcsncpy(g_tabs[g_activeTabIdx].title, titleBuf, 63);
                     g_tabs[g_activeTabIdx].title[63] = L'\0';
+                    g_isLoading = FALSE;
+                    UpdateBookmarkStatus();
                     if (g_hWndMain && IsWindow(g_hWndMain)) {
-                        RECT rcTop = { 0, 0, 2000, 40 };
+                        RECT rcTop = { 0, 0, 2000, 116 };
                         InvalidateRect(g_hWndMain, &rcTop, FALSE);
                     }
                 }
@@ -748,6 +879,11 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
             }
             g_tabs[g_activeTabIdx].isWeb = TRUE;
 
+            g_isLoading = TRUE;
+            g_loadProgress = 20;
+            SetTimer(hwnd, TIMER_PROGRESS, 30, NULL);
+            UpdateBookmarkStatus();
+
             ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
             SetFocus(g_hGeckoWnd);
         } else {
@@ -763,6 +899,11 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
             g_geckoTabCount = 1;
             g_tabs[g_activeTabIdx].geckoTabIdx = 1;
             g_tabs[g_activeTabIdx].isWeb = TRUE;
+
+            g_isLoading = TRUE;
+            g_loadProgress = 20;
+            SetTimer(hwnd, TIMER_PROGRESS, 30, NULL);
+            UpdateBookmarkStatus();
 
             wchar_t cmdLine[2048];
             swprintf(cmdLine, 2048, L"\"%ls\" %ls", binPath, args);
@@ -822,6 +963,7 @@ static void CreateNewTab(HWND hwnd, const wchar_t *title, const wchar_t *url) {
         g_tabCount++;
 
         SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[newIdx].url);
+        UpdateBookmarkStatus();
         if (isHome) {
             if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
         } else {
@@ -869,6 +1011,7 @@ static void CloseTab(HWND hwnd, int tabIdx) {
         }
         BOOL isHome = (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") == 0);
         SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[g_activeTabIdx].url);
+        UpdateBookmarkStatus();
         if (isHome) {
             if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
         } else {
@@ -891,6 +1034,7 @@ static void CloseTab(HWND hwnd, int tabIdx) {
         g_tabs[0].geckoTabIdx = 0;
         wcscpy(g_tabs[0].history[0], L"about:home");
         SetWindowText(g_hEditUrl, L"");
+        UpdateBookmarkStatus();
         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
         InvalidateRect(hwnd, NULL, FALSE);
     }
@@ -1038,12 +1182,31 @@ static void RenderUI(HWND hwnd, HDC hdc) {
             DeleteObject(hAccent);
         }
 
-        DrawIconBmp(memDC, g_hBmpWaterfox, g_tabs[i].rect.left + 8, g_tabs[i].rect.top + 8, 16, 16);
+        HBITMAP tabBmp = GetTabIcon(g_tabs[i].url, g_tabs[i].title);
+        DrawIconBmp(memDC, tabBmp ? tabBmp : g_hBmpWaterfox, g_tabs[i].rect.left + 8, g_tabs[i].rect.top + 8, 16, 16);
+
+        // Indicador de reproducción de audio y botón mute 🔊 / 🔇
+        BOOL isAudioTab = (wcsstr(g_tabs[i].url, L"music.youtube.com") != NULL ||
+                           wcsstr(g_tabs[i].url, L"youtube.com") != NULL ||
+                           wcsstr(g_tabs[i].title, L"YouTube") != NULL);
+        int textRightPad = 26;
+        if (isAudioTab) {
+            textRightPad = 48;
+            g_tabs[i].audioRect.right = g_tabs[i].rect.right - 24;
+            g_tabs[i].audioRect.left = g_tabs[i].rect.right - 44;
+            g_tabs[i].audioRect.top = g_tabs[i].rect.top + 8;
+            g_tabs[i].audioRect.bottom = g_tabs[i].rect.bottom - 8;
+            SetTextColor(memDC, g_tabs[i].isMuted ? COLOR_RED : COLOR_ACCENT);
+            SelectObject(memDC, g_hFontSmall);
+            DrawText(memDC, g_tabs[i].isMuted ? L"🔇" : L"🔊", -1, &g_tabs[i].audioRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        } else {
+            SetRectEmpty(&g_tabs[i].audioRect);
+        }
 
         SetBkMode(memDC, TRANSPARENT);
         SetTextColor(memDC, isActive ? COLOR_TEXT : COLOR_TEXT_MUTED);
         SelectObject(memDC, isActive ? g_hFontBold : g_hFontNormal);
-        RECT rcTabText = { g_tabs[i].rect.left + 28, g_tabs[i].rect.top + 6, g_tabs[i].rect.right - 26, g_tabs[i].rect.bottom };
+        RECT rcTabText = { g_tabs[i].rect.left + 28, g_tabs[i].rect.top + 6, g_tabs[i].rect.right - textRightPad, g_tabs[i].rect.bottom };
         DrawText(memDC, g_tabs[i].title, -1, &rcTabText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
         g_tabs[i].closeRect.left = g_tabs[i].rect.right - 22;
@@ -1232,6 +1395,19 @@ static void RenderUI(HWND hwnd, HDC hdc) {
         }
 
         currentY += 30;
+    }
+
+    // ------------------------------------------------------------------------
+    // 3.5. Barra Delgada de Progreso de Carga Web (Loading Bar 2px)
+    // ------------------------------------------------------------------------
+    if (g_loadProgress > 0) {
+        int progW = (width * g_loadProgress) / 100;
+        if (progW > 0) {
+            RECT rcProg = { 0, currentY - 2, progW, currentY };
+            HBRUSH hProgBrush = CreateSolidBrush(COLOR_ACCENT);
+            FillRect(memDC, &rcProg, hProgBrush);
+            DeleteObject(hProgBrush);
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -1483,6 +1659,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_activeTabIdx = 0;
 
         InitIconCache();
+        LoadBookmarksFromFile();
+        UpdateBookmarkStatus();
 
         g_hFontNormal = CreateFont(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         g_hFontBold   = CreateFont(15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -1591,6 +1769,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_TIMER: {
+        if (wParam == TIMER_PROGRESS) {
+            if (g_isLoading) {
+                if (g_loadProgress < 85) {
+                    g_loadProgress += (85 - g_loadProgress) / 4 + 1;
+                }
+            } else {
+                g_loadProgress += 15;
+                if (g_loadProgress >= 100) {
+                    g_loadProgress = 0;
+                    KillTimer(hwnd, TIMER_PROGRESS);
+                }
+            }
+            int bottomNavY = g_showBookmarksBar ? 114 : 84;
+            RECT rcProg = { 0, bottomNavY - 4, 3000, bottomNavY + 2 };
+            InvalidateRect(hwnd, &rcProg, FALSE);
+            return 0;
+        }
+
         if (wParam == TIMER_MEM_TRIM) {
             static int s_trimCount = 0;
             s_trimCount++;
@@ -1608,7 +1804,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     if (wcscmp(g_tabs[g_activeTabIdx].title, currentTitle) != 0 && wcslen(currentTitle) > 0) {
                         wcsncpy(g_tabs[g_activeTabIdx].title, currentTitle, 63);
                         g_tabs[g_activeTabIdx].title[63] = L'\0';
-                        RECT rcTop = { 0, 0, 2000, 40 };
+                        g_isLoading = FALSE;
+                        UpdateBookmarkStatus();
+                        RECT rcTop = { 0, 0, 2000, 116 };
                         InvalidateRect(hwnd, &rcTop, FALSE);
                     }
                 }
@@ -1750,11 +1948,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
+            if (!IsRectEmpty(&g_tabs[i].audioRect) && PtInRect(&g_tabs[i].audioRect, (POINT){ x, y })) {
+                g_tabs[i].isMuted = !g_tabs[i].isMuted;
+                if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+                    if (g_tabs[i].geckoTabIdx > 0) SwitchToGeckoTab(g_tabs[i].geckoTabIdx);
+                    INPUT inputs[4] = { 0 };
+                    inputs[0].type = INPUT_KEYBOARD;
+                    inputs[0].ki.wVk = VK_CONTROL;
+                    inputs[1].type = INPUT_KEYBOARD;
+                    inputs[1].ki.wVk = 'M';
+                    inputs[2].type = INPUT_KEYBOARD;
+                    inputs[2].ki.wVk = 'M';
+                    inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+                    inputs[3].type = INPUT_KEYBOARD;
+                    inputs[3].ki.wVk = VK_CONTROL;
+                    inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+                    SendInput(4, inputs, sizeof(INPUT));
+                }
+                InvalidateRect(hwnd, NULL, FALSE);
+                return 0;
+            }
+
             if (PtInRect(&g_tabs[i].rect, (POINT){ x, y })) {
                 g_activeTabIdx = i;
                 for (int j = 0; j < g_tabCount; j++) g_tabs[j].isActive = (j == i);
                 BOOL isHome = (wcscmp(g_tabs[i].url, L"about:home") == 0);
                 SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[i].url);
+                UpdateBookmarkStatus();
                 if (isHome) {
                     if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
                 } else {
@@ -1829,10 +2049,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
-        // 6. Botón Estrella de Marcador ⭐
+        // 6. Botón Estrella de Marcador ⭐ (Añadir / Eliminar Marcador con Persistencia)
         if (PtInRect(&g_rcStar, (POINT){ x, y })) {
-            g_isBookmarked = !g_isBookmarked;
-            InvalidateRect(hwnd, NULL, FALSE);
+            const wchar_t *curUrl = g_tabs[g_activeTabIdx].url;
+            if (curUrl && wcscmp(curUrl, L"about:home") != 0 && wcslen(curUrl) > 0) {
+                int foundIdx = -1;
+                for (int i = 0; i < g_bookmarkCount; i++) {
+                    if (wcscmp(g_bookmarks[i].url, curUrl) == 0) {
+                        foundIdx = i;
+                        break;
+                    }
+                }
+                if (foundIdx >= 0) {
+                    for (int j = foundIdx; j < g_bookmarkCount - 1; j++) {
+                        g_bookmarks[j] = g_bookmarks[j + 1];
+                    }
+                    g_bookmarkCount--;
+                    g_isBookmarked = FALSE;
+                    SaveBookmarksToFile();
+                } else if (g_bookmarkCount < MAX_BOOKMARKS) {
+                    wcsncpy(g_bookmarks[g_bookmarkCount].title, g_tabs[g_activeTabIdx].title, 63);
+                    g_bookmarks[g_bookmarkCount].title[63] = L'\0';
+                    wcsncpy(g_bookmarks[g_bookmarkCount].url, curUrl, 511);
+                    g_bookmarks[g_bookmarkCount].url[511] = L'\0';
+                    g_bookmarks[g_bookmarkCount].hIcon = GetTabIcon(curUrl, g_tabs[g_activeTabIdx].title);
+                    g_bookmarks[g_bookmarkCount].resId = 0;
+                    g_bookmarkCount++;
+                    g_isBookmarked = TRUE;
+                    SaveBookmarksToFile();
+                }
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
             return 0;
         }
 
@@ -1840,6 +2087,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (PtInRect(&g_rcHome, (POINT){ x, y })) {
             NavigateTab(g_activeTabIdx, L"Waterfox Lite - Home", L"about:home");
             SetWindowText(g_hEditUrl, L"");
+            UpdateBookmarkStatus();
             if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
                 ShowWindow(g_hGeckoWnd, SW_HIDE);
             }
@@ -2012,6 +2260,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY: {
         KillTimer(hwnd, TIMER_MEM_TRIM);
         KillTimer(hwnd, TIMER_DOCK_GECKO);
+        KillTimer(hwnd, TIMER_PROGRESS);
         if (g_hTitleHook) {
             UnhookWinEvent(g_hTitleHook);
             g_hTitleHook = NULL;
@@ -2076,6 +2325,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (!hwnd) return 1;
 
     if (strstr(lpCmdLine, "--screenshot") != NULL || wcsstr(GetCommandLineW(), L"--screenshot") != NULL) {
+        if (strstr(lpCmdLine, "--tabs") != NULL || wcsstr(GetCommandLineW(), L"--tabs") != NULL) {
+            wcsncpy(g_tabs[0].title, L"Waterfox Lite - Home", 63);
+            wcsncpy(g_tabs[0].url, L"about:home", 511);
+            g_tabs[0].isActive = FALSE;
+
+            g_tabCount = 3;
+            wcsncpy(g_tabs[1].title, L"YouTube Music - Reproduciendo", 63);
+            wcsncpy(g_tabs[1].url, L"https://music.youtube.com", 511);
+            g_tabs[1].isWeb = TRUE;
+            g_tabs[1].isActive = TRUE;
+            g_tabs[1].geckoTabIdx = 1;
+
+            wcsncpy(g_tabs[2].title, L"Inicio / X (Twitter)", 63);
+            wcsncpy(g_tabs[2].url, L"https://x.com/home", 511);
+            g_tabs[2].isWeb = TRUE;
+            g_tabs[2].isActive = FALSE;
+            g_tabs[2].geckoTabIdx = 2;
+
+            g_activeTabIdx = 1;
+            g_loadProgress = 60;
+            UpdateBookmarkStatus();
+        }
+
         HDC screenDC = GetDC(NULL);
         HDC memDC = CreateCompatibleDC(screenDC);
         HBITMAP hBmp = CreateCompatibleBitmap(screenDC, 1080, 680);
@@ -2180,6 +2452,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                     for (int j = 0; j < g_tabCount; j++) g_tabs[j].isActive = (j == nextTab);
                     BOOL isHome = (wcscmp(g_tabs[nextTab].url, L"about:home") == 0);
                     SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[nextTab].url);
+                    UpdateBookmarkStatus();
                     if (isHome) {
                         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
                     } else {
@@ -2202,6 +2475,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                     for (int j = 0; j < g_tabCount; j++) g_tabs[j].isActive = (j == targetTab);
                     BOOL isHome = (wcscmp(g_tabs[targetTab].url, L"about:home") == 0);
                     SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[targetTab].url);
+                    UpdateBookmarkStatus();
                     if (isHome) {
                         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
                     } else {
