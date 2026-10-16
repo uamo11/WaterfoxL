@@ -88,6 +88,8 @@ typedef struct {
     RECT rect;
     RECT closeRect;
     BOOL isActive;
+    BOOL isWeb;
+    int geckoTabIdx;
 } BrowserTab;
 
 // Estructura de App REA
@@ -238,12 +240,17 @@ static BOOL g_isGeckoDocking = FALSE;
 static int g_dockAttempts = 0;
 static DWORD g_geckoPid = 0;
 static HWND g_hFoundGecko = NULL;
+static int g_geckoTabCount = 0;
+static HWINEVENTHOOK g_hTitleHook = NULL;
 
 static RECT g_rcWinMin = {0}, g_rcWinMax = {0}, g_rcWinClose = {0};
 static int g_hoveredWinBtn = 0; // 1: Min, 2: Max, 3: Close
 
 // Declaraciones adelantadas
-static void LaunchUrl(HWND hwnd, const wchar_t *url);
+static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab);
+static void SwitchToGeckoTab(int targetIdx);
+static void CreateNewTab(HWND hwnd, const wchar_t *title, const wchar_t *url);
+static void CloseTab(HWND hwnd, int tabIdx);
 static void NavigateTab(int tabIdx, const wchar_t *title, const wchar_t *url);
 static void ShowGamesFolderPopup(HWND hwnd, RECT *anchorRect);
 
@@ -578,6 +585,62 @@ static BOOL CALLBACK EnumGeckoProc(HWND hwnd, LPARAM lParam) {
     return TRUE;
 }
 
+static void CALLBACK GeckoTitleWinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime) {
+    if (hwnd == g_hGeckoWnd && idObject == OBJID_WINDOW) {
+        wchar_t titleBuf[256];
+        if (GetWindowTextW(hwnd, titleBuf, 256) > 0) {
+            wchar_t *dash = wcsstr(titleBuf, L" — Waterfox");
+            if (!dash) dash = wcsstr(titleBuf, L" - Waterfox");
+            if (dash) *dash = L'\0';
+
+            if (g_activeTabIdx >= 0 && g_activeTabIdx < g_tabCount) {
+                if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0 && wcslen(titleBuf) > 0) {
+                    wcsncpy(g_tabs[g_activeTabIdx].title, titleBuf, 63);
+                    g_tabs[g_activeTabIdx].title[63] = L'\0';
+                    if (g_hWndMain && IsWindow(g_hWndMain)) {
+                        RECT rcTop = { 0, 0, 2000, 40 };
+                        InvalidateRect(g_hWndMain, &rcTop, FALSE);
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void SwitchToGeckoTab(int targetIdx) {
+    if (!g_hGeckoWnd || !IsWindow(g_hGeckoWnd) || targetIdx <= 0) return;
+    SetFocus(g_hGeckoWnd);
+
+    if (targetIdx >= 1 && targetIdx <= 8) {
+        WORD key = (WORD)('0' + targetIdx);
+        INPUT inputs[4] = { 0 };
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].ki.wVk = VK_CONTROL;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].ki.wVk = key;
+        inputs[2].type = INPUT_KEYBOARD;
+        inputs[2].ki.wVk = key;
+        inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs[3].type = INPUT_KEYBOARD;
+        inputs[3].ki.wVk = VK_CONTROL;
+        inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(4, inputs, sizeof(INPUT));
+    } else {
+        INPUT inputs[4] = { 0 };
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].ki.wVk = VK_CONTROL;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].ki.wVk = '9';
+        inputs[2].type = INPUT_KEYBOARD;
+        inputs[2].ki.wVk = '9';
+        inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs[3].type = INPUT_KEYBOARD;
+        inputs[3].ki.wVk = VK_CONTROL;
+        inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(4, inputs, sizeof(INPUT));
+    }
+}
+
 static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
     if (!hwndGecko || !IsWindow(hwndGecko)) return;
 
@@ -587,9 +650,16 @@ static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
     SetWindowLongPtr(hwndGecko, GWL_STYLE, style);
     SetParent(hwndGecko, hwndParent);
 
-    DWORD geckoThreadId = GetWindowThreadProcessId(hwndGecko, NULL);
+    DWORD geckoPid = 0;
+    DWORD geckoThreadId = GetWindowThreadProcessId(hwndGecko, &geckoPid);
     if (geckoThreadId != 0 && geckoThreadId != GetCurrentThreadId()) {
         AttachThreadInput(GetCurrentThreadId(), geckoThreadId, TRUE);
+    }
+
+    if (!g_hTitleHook && geckoThreadId != 0) {
+        g_hTitleHook = SetWinEventHook(EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, NULL,
+                                       GeckoTitleWinEventProc, geckoPid,
+                                       geckoThreadId, WINEVENT_OUTOFCONTEXT);
     }
 
     RECT rc;
@@ -607,7 +677,7 @@ static void DockGeckoWindow(HWND hwndParent, HWND hwndGecko) {
 // ----------------------------------------------------------------------------
 // Lanzador hacia Waterfox Lite
 // ----------------------------------------------------------------------------
-static void LaunchUrl(HWND hwnd, const wchar_t *url) {
+static void LaunchUrl(HWND hwnd, const wchar_t *url, BOOL isNewTab) {
     if (!url || wcslen(url) == 0) return;
 
     // Si es about:home, simplemente ocultamos el visor Gecko y mostramos la UI nativa en C
@@ -645,10 +715,14 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
         wchar_t *lastSlash = wcsrchr(binDir, L'\\');
         if (lastSlash) *lastSlash = L'\0';
 
+        BOOL needNewGeckoTab = isNewTab || (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && g_tabs[g_activeTabIdx].geckoTabIdx == 0 && g_geckoTabCount > 0);
+
         // Lanzar con -profile sin -no-remote para permitir abrir pestañas fluidamente
         wchar_t args[1024];
         if (wcsncmp(url, L"-private-window ", 16) == 0) {
             swprintf(args, 1024, L"-profile \"%ls\" -private-window \"%ls\"", profPath, url + 16);
+        } else if (needNewGeckoTab) {
+            swprintf(args, 1024, L"-profile \"%ls\" -new-tab \"%ls\"", profPath, url);
         } else {
             swprintf(args, 1024, L"-profile \"%ls\" -url \"%ls\"", profPath, url);
         }
@@ -662,6 +736,18 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
             int childH = rc.bottom - topY;
             if (childH < 0) childH = 0;
             SetWindowPos(g_hGeckoWnd, NULL, 0, topY, rc.right, childH, SWP_NOZORDER | SWP_SHOWWINDOW);
+
+            if (needNewGeckoTab) {
+                g_geckoTabCount++;
+                g_tabs[g_activeTabIdx].geckoTabIdx = g_geckoTabCount;
+            } else if (g_tabs[g_activeTabIdx].geckoTabIdx == 0) {
+                g_geckoTabCount = 1;
+                g_tabs[g_activeTabIdx].geckoTabIdx = 1;
+            } else {
+                SwitchToGeckoTab(g_tabs[g_activeTabIdx].geckoTabIdx);
+            }
+            g_tabs[g_activeTabIdx].isWeb = TRUE;
+
             ShellExecute(NULL, L"open", binPath, args, binDir, SW_SHOWNORMAL);
             SetFocus(g_hGeckoWnd);
         } else {
@@ -673,6 +759,10 @@ static void LaunchUrl(HWND hwnd, const wchar_t *url) {
             g_isGeckoDocking = TRUE;
             g_dockAttempts = 0;
             g_geckoPid = 0;
+
+            g_geckoTabCount = 1;
+            g_tabs[g_activeTabIdx].geckoTabIdx = 1;
+            g_tabs[g_activeTabIdx].isWeb = TRUE;
 
             wchar_t cmdLine[2048];
             swprintf(cmdLine, 2048, L"\"%ls\" %ls", binPath, args);
@@ -716,19 +806,26 @@ static void CreateNewTab(HWND hwnd, const wchar_t *title, const wchar_t *url) {
     if (g_tabCount < MAX_TABS) {
         int newIdx = g_tabCount;
         wcsncpy(g_tabs[newIdx].title, title ? title : L"Nueva Pestaña", 63);
+        g_tabs[newIdx].title[63] = L'\0';
         wcsncpy(g_tabs[newIdx].url, url ? url : L"about:home", 511);
+        g_tabs[newIdx].url[511] = L'\0';
         g_tabs[newIdx].historyCount = 1;
         g_tabs[newIdx].historyIdx = 0;
         wcsncpy(g_tabs[newIdx].history[0], g_tabs[newIdx].url, 511);
+        
+        BOOL isHome = (wcscmp(g_tabs[newIdx].url, L"about:home") == 0);
+        g_tabs[newIdx].isWeb = !isHome;
+        g_tabs[newIdx].geckoTabIdx = 0;
+
         for (int j = 0; j <= newIdx; j++) g_tabs[j].isActive = (j == newIdx);
         g_activeTabIdx = newIdx;
         g_tabCount++;
-        BOOL isHome = (wcscmp(g_tabs[newIdx].url, L"about:home") == 0);
+
         SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[newIdx].url);
         if (isHome) {
             if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
         } else {
-            LaunchUrl(hwnd, g_tabs[newIdx].url);
+            LaunchUrl(hwnd, g_tabs[newIdx].url, TRUE);
         }
         InvalidateRect(hwnd, NULL, FALSE);
     }
@@ -736,6 +833,31 @@ static void CreateNewTab(HWND hwnd, const wchar_t *title, const wchar_t *url) {
 
 static void CloseTab(HWND hwnd, int tabIdx) {
     if (tabIdx < 0 || tabIdx >= g_tabCount) return;
+    
+    int closedGeckoIdx = g_tabs[tabIdx].geckoTabIdx;
+    if (closedGeckoIdx > 0 && g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+        SwitchToGeckoTab(closedGeckoIdx);
+        INPUT inputs[4] = { 0 };
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].ki.wVk = VK_CONTROL;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].ki.wVk = 'W';
+        inputs[2].type = INPUT_KEYBOARD;
+        inputs[2].ki.wVk = 'W';
+        inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        inputs[3].type = INPUT_KEYBOARD;
+        inputs[3].ki.wVk = VK_CONTROL;
+        inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(4, inputs, sizeof(INPUT));
+
+        if (g_geckoTabCount > 0) g_geckoTabCount--;
+        for (int m = 0; m < g_tabCount; m++) {
+            if (g_tabs[m].geckoTabIdx > closedGeckoIdx) {
+                g_tabs[m].geckoTabIdx--;
+            }
+        }
+    }
+
     if (g_tabCount > 1) {
         for (int j = tabIdx; j < g_tabCount - 1; j++) {
             g_tabs[j] = g_tabs[j + 1];
@@ -750,7 +872,14 @@ static void CloseTab(HWND hwnd, int tabIdx) {
         if (isHome) {
             if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
         } else {
-            LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url);
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+                ShowWindow(g_hGeckoWnd, SW_SHOW);
+                if (g_tabs[g_activeTabIdx].geckoTabIdx > 0) {
+                    SwitchToGeckoTab(g_tabs[g_activeTabIdx].geckoTabIdx);
+                }
+            } else {
+                LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url, FALSE);
+            }
         }
         InvalidateRect(hwnd, NULL, FALSE);
     } else {
@@ -758,6 +887,8 @@ static void CloseTab(HWND hwnd, int tabIdx) {
         wcscpy(g_tabs[0].url, L"about:home");
         g_tabs[0].historyCount = 1;
         g_tabs[0].historyIdx = 0;
+        g_tabs[0].isWeb = FALSE;
+        g_tabs[0].geckoTabIdx = 0;
         wcscpy(g_tabs[0].history[0], L"about:home");
         SetWindowText(g_hEditUrl, L"");
         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
@@ -1219,7 +1350,7 @@ static void ShowBookmarksPopup(HWND hwnd, RECT *anchorRect) {
         int idx = cmd - 3000;
         NavigateTab(g_activeTabIdx, g_bookmarks[idx].title, g_bookmarks[idx].url);
         SetWindowText(g_hEditUrl, g_bookmarks[idx].url);
-        LaunchUrl(hwnd, g_bookmarks[idx].url);
+        LaunchUrl(hwnd, g_bookmarks[idx].url, FALSE);
         InvalidateRect(hwnd, NULL, FALSE);
     }
 }
@@ -1264,21 +1395,21 @@ static void ShowGamesFolderPopup(HWND hwnd, RECT *anchorRect) {
         int idx = cmd - ID_GAME_START;
         NavigateTab(g_activeTabIdx, g_gamesMundoAbierto[idx].title, g_gamesMundoAbierto[idx].url);
         SetWindowText(g_hEditUrl, g_gamesMundoAbierto[idx].url);
-        LaunchUrl(hwnd, g_gamesMundoAbierto[idx].url);
+        LaunchUrl(hwnd, g_gamesMundoAbierto[idx].url, FALSE);
         InvalidateRect(hwnd, NULL, FALSE);
     }
     else if (cmd >= ID_GAME_START + 100 && cmd < ID_GAME_START + 100 + (int)NUM_GAMES_ZOMBIES) {
         int idx = cmd - (ID_GAME_START + 100);
         NavigateTab(g_activeTabIdx, g_gamesZombies[idx].title, g_gamesZombies[idx].url);
         SetWindowText(g_hEditUrl, g_gamesZombies[idx].url);
-        LaunchUrl(hwnd, g_gamesZombies[idx].url);
+        LaunchUrl(hwnd, g_gamesZombies[idx].url, FALSE);
         InvalidateRect(hwnd, NULL, FALSE);
     }
     else if (cmd >= ID_GAME_START + 200 && cmd < ID_GAME_START + 200 + (int)NUM_GAMES_SHOOTERS) {
         int idx = cmd - (ID_GAME_START + 200);
         NavigateTab(g_activeTabIdx, g_gamesShooters[idx].title, g_gamesShooters[idx].url);
         SetWindowText(g_hEditUrl, g_gamesShooters[idx].url);
-        LaunchUrl(hwnd, g_gamesShooters[idx].url);
+        LaunchUrl(hwnd, g_gamesShooters[idx].url, FALSE);
         InvalidateRect(hwnd, NULL, FALSE);
     }
     else if (cmd == 4999) {
@@ -1467,6 +1598,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 s_trimCount = 0;
                 EmptyWorkingSet(GetCurrentProcess());
             }
+            if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd) && g_tabs[g_activeTabIdx].isWeb) {
+                wchar_t currentTitle[256];
+                int len = GetWindowTextW(g_hGeckoWnd, currentTitle, 256);
+                if (len > 0) {
+                    wchar_t *dash = wcsstr(currentTitle, L" — Waterfox");
+                    if (!dash) dash = wcsstr(currentTitle, L" - Waterfox");
+                    if (dash) *dash = L'\0';
+                    if (wcscmp(g_tabs[g_activeTabIdx].title, currentTitle) != 0 && wcslen(currentTitle) > 0) {
+                        wcsncpy(g_tabs[g_activeTabIdx].title, currentTitle, 63);
+                        g_tabs[g_activeTabIdx].title[63] = L'\0';
+                        RECT rcTop = { 0, 0, 2000, 40 };
+                        InvalidateRect(hwnd, &rcTop, FALSE);
+                    }
+                }
+            }
             return 0;
         }
 
@@ -1612,7 +1758,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (isHome) {
                     if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
                 } else {
-                    LaunchUrl(hwnd, g_tabs[i].url);
+                    if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+                        ShowWindow(g_hGeckoWnd, SW_SHOW);
+                        if (g_tabs[i].geckoTabIdx > 0) {
+                            SwitchToGeckoTab(g_tabs[i].geckoTabIdx);
+                        }
+                    } else {
+                        LaunchUrl(hwnd, g_tabs[i].url, FALSE);
+                    }
                 }
                 InvalidateRect(hwnd, NULL, FALSE);
                 return 0;
@@ -1636,7 +1789,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 wcsncpy(activeTab->url, prevUrl, 511);
                 SetWindowText(g_hEditUrl, wcscmp(prevUrl, L"about:home") == 0 ? L"" : prevUrl);
                 if (wcscmp(prevUrl, L"about:home") != 0) {
-                    LaunchUrl(hwnd, prevUrl);
+                    LaunchUrl(hwnd, prevUrl, FALSE);
                 } else {
                     if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
                 }
@@ -1654,7 +1807,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 wcsncpy(activeTab->url, nextUrl, 511);
                 SetWindowText(g_hEditUrl, wcscmp(nextUrl, L"about:home") == 0 ? L"" : nextUrl);
                 if (wcscmp(nextUrl, L"about:home") != 0) {
-                    LaunchUrl(hwnd, nextUrl);
+                    LaunchUrl(hwnd, nextUrl, FALSE);
                 } else {
                     if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
                 }
@@ -1699,7 +1852,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (g_hGeckoWnd && IsWindow(g_hGeckoWnd) && IsWindowVisible(g_hGeckoWnd)) {
                 SendMessage(g_hGeckoWnd, WM_APPCOMMAND, (WPARAM)g_hGeckoWnd, MAKELPARAM(0, FAPPCOMMAND_KEY | APPCOMMAND_BROWSER_REFRESH));
             } else if (wcscmp(g_tabs[g_activeTabIdx].url, L"about:home") != 0) {
-                LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url);
+                LaunchUrl(hwnd, g_tabs[g_activeTabIdx].url, FALSE);
             } else {
                 InvalidateRect(hwnd, NULL, FALSE);
             }
@@ -1714,7 +1867,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 } else {
                     NavigateTab(g_activeTabIdx, g_apps[i].name, g_apps[i].url);
                     SetWindowText(g_hEditUrl, g_apps[i].url);
-                    LaunchUrl(hwnd, g_apps[i].url);
+                    LaunchUrl(hwnd, g_apps[i].url, FALSE);
                     InvalidateRect(hwnd, NULL, FALSE);
                 }
                 return 0;
@@ -1732,7 +1885,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     } else if (wcslen(g_bookmarks[i].url) > 0) {
                         NavigateTab(g_activeTabIdx, g_bookmarks[i].title, g_bookmarks[i].url);
                         SetWindowText(g_hEditUrl, g_bookmarks[i].url);
-                        LaunchUrl(hwnd, g_bookmarks[i].url);
+                        LaunchUrl(hwnd, g_bookmarks[i].url, FALSE);
                         InvalidateRect(hwnd, NULL, FALSE);
                     }
                     return 0;
@@ -1758,24 +1911,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         case IDM_PRIVATE_WINDOW:
-            LaunchUrl(hwnd, L"-private-window https://www.google.com");
+            LaunchUrl(hwnd, L"-private-window https://www.google.com", FALSE);
             break;
 
         case IDM_BOOKMARKS:
         case IDM_HISTORY:
-            LaunchUrl(hwnd, L"about:history");
+            LaunchUrl(hwnd, L"about:history", FALSE);
             break;
 
         case IDM_DOWNLOADS:
-            LaunchUrl(hwnd, L"about:downloads");
+            LaunchUrl(hwnd, L"about:downloads", FALSE);
             break;
 
         case IDM_EXTENSIONS:
-            LaunchUrl(hwnd, L"about:addons");
+            LaunchUrl(hwnd, L"about:addons", FALSE);
             break;
 
         case IDM_SETTINGS:
-            LaunchUrl(hwnd, L"about:preferences");
+            LaunchUrl(hwnd, L"about:preferences", FALSE);
             break;
 
         case IDM_TOGGLE_BOOKMARKS:
@@ -1829,7 +1982,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 } else {
                     NavigateTab(g_activeTabIdx, g_apps[idx].name, g_apps[idx].url);
                     SetWindowText(g_hEditUrl, g_apps[idx].url);
-                    LaunchUrl(hwnd, g_apps[idx].url);
+                    LaunchUrl(hwnd, g_apps[idx].url, FALSE);
                     InvalidateRect(hwnd, NULL, FALSE);
                 }
             }
@@ -1859,6 +2012,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY: {
         KillTimer(hwnd, TIMER_MEM_TRIM);
         KillTimer(hwnd, TIMER_DOCK_GECKO);
+        if (g_hTitleHook) {
+            UnhookWinEvent(g_hTitleHook);
+            g_hTitleHook = NULL;
+        }
         if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
             DWORD geckoThreadId = GetWindowThreadProcessId(g_hGeckoWnd, NULL);
             PostMessage(g_hGeckoWnd, WM_CLOSE, 0, 0);
@@ -2005,7 +2162,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                         swprintf(target, 1024, L"https://www.google.com/search?q=%ls", encoded);
                     }
                     NavigateTab(g_activeTabIdx, p, target);
-                    LaunchUrl(hwnd, target);
+                    LaunchUrl(hwnd, target, FALSE);
                     InvalidateRect(hwnd, NULL, FALSE);
                 }
                 continue;
@@ -2013,6 +2170,50 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             if (isCtrl && (msg.wParam == 'T' || msg.wParam == 't')) {
                 SendMessage(hwnd, WM_COMMAND, IDM_NEW_TAB, 0);
+                continue;
+            }
+
+            if (isCtrl && msg.wParam == VK_TAB) {
+                if (g_tabCount > 1) {
+                    int nextTab = isShift ? (g_activeTabIdx - 1 + g_tabCount) % g_tabCount : (g_activeTabIdx + 1) % g_tabCount;
+                    g_activeTabIdx = nextTab;
+                    for (int j = 0; j < g_tabCount; j++) g_tabs[j].isActive = (j == nextTab);
+                    BOOL isHome = (wcscmp(g_tabs[nextTab].url, L"about:home") == 0);
+                    SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[nextTab].url);
+                    if (isHome) {
+                        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+                    } else {
+                        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+                            ShowWindow(g_hGeckoWnd, SW_SHOW);
+                            if (g_tabs[nextTab].geckoTabIdx > 0) SwitchToGeckoTab(g_tabs[nextTab].geckoTabIdx);
+                        } else {
+                            LaunchUrl(hwnd, g_tabs[nextTab].url, FALSE);
+                        }
+                    }
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+                continue;
+            }
+
+            if (isCtrl && msg.wParam >= '1' && msg.wParam <= '8') {
+                int targetTab = (int)(msg.wParam - '1');
+                if (targetTab < g_tabCount) {
+                    g_activeTabIdx = targetTab;
+                    for (int j = 0; j < g_tabCount; j++) g_tabs[j].isActive = (j == targetTab);
+                    BOOL isHome = (wcscmp(g_tabs[targetTab].url, L"about:home") == 0);
+                    SetWindowText(g_hEditUrl, isHome ? L"" : g_tabs[targetTab].url);
+                    if (isHome) {
+                        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) ShowWindow(g_hGeckoWnd, SW_HIDE);
+                    } else {
+                        if (g_hGeckoWnd && IsWindow(g_hGeckoWnd)) {
+                            ShowWindow(g_hGeckoWnd, SW_SHOW);
+                            if (g_tabs[targetTab].geckoTabIdx > 0) SwitchToGeckoTab(g_tabs[targetTab].geckoTabIdx);
+                        } else {
+                            LaunchUrl(hwnd, g_tabs[targetTab].url, FALSE);
+                        }
+                    }
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
                 continue;
             }
 
