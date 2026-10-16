@@ -60,6 +60,8 @@
 #define IDM_ZOOM_OUT         2014
 #define IDM_ZOOM_RESET       2015
 
+#define ID_GAME_START        4000
+
 // Estructura de Pestaña con Historial Real
 #define MAX_TABS 12
 #define MAX_HISTORY 16
@@ -92,9 +94,61 @@ static AppCard g_apps[] = {
     { L"3", L"YouTube", L"H.264 por GPU", L"https://www.youtube.com", L"yt.bmp", RGB(200, 20, 20) },
     { L"4", L"Facebook", L"Sin biometría / Ligero", L"https://web.facebook.com", L"fb.bmp", RGB(24, 119, 242) },
     { L"5", L"Gemini", L"Streaming acelerado", L"https://gemini.google.com", L"gemini.bmp", RGB(155, 81, 224) },
-    { L"6", L"GTA V Web", L"360p / No Shadows", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0", L"gta.bmp", RGB(46, 125, 50) }
+    { L"6", L"GTA V Web", L"360p / 30FPS Low", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0", L"gta.bmp", RGB(46, 125, 50) },
+    { L"7", L"Juegos Web", L"Carpeta de 24 Juegos", L"action:games_folder", L"gamepad.bmp", RGB(155, 81, 224) }
 };
 #define NUM_APPS (sizeof(g_apps) / sizeof(g_apps[0]))
+
+// ============================================================================
+// Catálogo de Juegos Web Optimizados (WASM / WebGL) - Sin Duplicados
+// ============================================================================
+typedef struct {
+    const wchar_t *title;
+    const wchar_t *url;
+    const wchar_t *desc;
+} WebGameItem;
+
+// 1. Mundo Abierto y Otros
+static WebGameItem g_gamesMundoAbierto[] = {
+    { L"GTA 5 Web (Principal - 30FPS Low)", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0", L"360p / 30FPS para Pentium G620" },
+    { L"GTA 5 Web (Mirror Deloski)", L"https://gta.deloskiyt.pl", L"Mirror alternativo" },
+    { L"GTA 5 Web (Mirror Archive.org)", L"https://web.archive.org/web/20261006050000/https://fiveplay.lol/", L"Respaldo Web Archive" },
+    { L"GTA Vice City (WASM)", L"https://joncodeofficial.github.io/gta-vice-city/", L"Puerto WebAssembly C++" },
+    { L"The Simpsons: Hit & Run", L"https://shar-wasm.cjoseph.workers.dev/?skipmovie", L"WASM con skipmovie" },
+    { L"Skate 3 (Web)", L"https://skate.aaddpp.lol", L"Emulador WebGL" },
+    { L"Skate Rust", L"https://global-terror.net", L"Skate multiplayer" },
+    { L"PES 6 (Pro Evolution Soccer 6)", L"https://pes6.optijuegos.net", L"Fútbol clásico optimizado" },
+    { L"Hedgewars (WASM)", L"https://webwars.link", L"Estrategia por turnos" },
+    { L"Más GTA / Minecraft (WasmArcade)", L"https://wasmarcade.com", L"Catálogo WASM arcade" }
+};
+#define NUM_GAMES_OPENWORLD (sizeof(g_gamesMundoAbierto) / sizeof(g_gamesMundoAbierto[0]))
+
+// 2. Modo Zombies
+static WebGameItem g_gamesZombies[] = {
+    { L"Call of Duty: BO1 Zombies", L"https://vel.gg/bo1z", L"Zombies clásicos en navegador" },
+    { L"Moon Zombies", L"https://moon-zombies.pages.dev", L"Mapa Moon optimizado" },
+    { L"Kino der Toten", L"https://kino-der-toten.pages.dev", L"Mapa clásico Kino" },
+    { L"BO3 Cheese Cube", L"https://cheese-cube.pages.dev", L"Custom Zombies map" }
+};
+#define NUM_GAMES_ZOMBIES (sizeof(g_gamesZombies) / sizeof(g_gamesZombies[0]))
+
+// 3. Shooters y Clásicos
+static WebGameItem g_gamesShooters[] = {
+    { L"Call of Duty: Black Ops 2", L"https://vibeslops.luckeysystems.com", L"Shooter multijugador web" },
+    { L"Call of Duty: Modern Warfare 2", L"https://ovz-game-production.up.railway.app", L"MW2 Web port" },
+    { L"Halo: Combat Evolved", L"https://mitchellhynes.com/halo", L"Halo CE en navegador" },
+    { L"Halo CE Mobile", L"https://hcemobile.com", L"Halo CE versión ligera" },
+    { L"Quake 1 (WASM)", L"https://q1.pieter.com", L"Motor idTech 1 WebGL" },
+    { L"Quake 2 (WASM)", L"https://q2.pieter.com", L"Motor idTech 2 WebGL" },
+    { L"Quake 3 Arena (WASM)", L"https://q3.pieter.com", L"Motor idTech 3 WebGL" },
+    { L"Return to Castle Wolfenstein", L"https://rtcw.pieter.com", L"RTCW WebAssembly" },
+    { L"Unreal Tournament (WASM)", L"https://ut.pieter.com", L"UT99 Web port" },
+    { L"Half-Life (WebGL)", L"https://pixelsuft.github.io/hl/", L"GoldSrc en navegador" },
+    { L"Half-Life / CS 1.6 (WebXash)", L"https://x8bitrain.github.io/webXash/", L"Motor Xash3D WebAssembly" },
+    { L"CS Surf", L"https://surfd.net", L"Counter-Strike Surfing Web" },
+    { L"Diablo 1 (DiabloWeb)", L"https://johnimril.github.io/diablo_web/", L"Diablo WebAssembly" }
+};
+#define NUM_GAMES_SHOOTERS (sizeof(g_gamesShooters) / sizeof(g_gamesShooters[0]))
 
 // Marcadores Rápidos para la barra de marcadores
 typedef struct {
@@ -104,13 +158,14 @@ typedef struct {
 } BookmarkItem;
 
 static BookmarkItem g_bookmarks[] = {
-    { L"📁 Marcadores Rápidos", L"" },
+    { L"📁 Marcadores", L"action:bookmarks" },
+    { L"🎮 Carpeta de Juegos ▾", L"action:games_folder" },
     { L"𝕏 X", L"https://x.com" },
     { L"🎵 YT Music", L"https://music.youtube.com" },
     { L"🎬 YouTube", L"https://www.youtube.com" },
     { L"👥 Facebook", L"https://web.facebook.com" },
     { L"✨ Gemini", L"https://gemini.google.com" },
-    { L"🎮 GTA V Web", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0" }
+    { L"🚗 GTA V Web", L"https://fiveplay.lol/?low=1&fps=30&cores=2&res=640x360&shadows=0" }
 };
 #define NUM_BOOKMARKS (sizeof(g_bookmarks) / sizeof(g_bookmarks[0]))
 
@@ -128,6 +183,7 @@ static HBRUSH g_hEditBgBrush = NULL;
 
 static HBITMAP g_hBmpWaterfox = NULL;
 static HBITMAP g_hBmpFolder = NULL;
+static HBITMAP g_hBmpGameFolder = NULL;
 
 static int g_hoveredApp = -1;
 static int g_hoveredTab = -1;
@@ -140,6 +196,11 @@ static BOOL g_isBookmarked = FALSE;
 
 static RECT g_rcBack, g_rcFwd, g_rcReload, g_rcHome, g_rcStar, g_rcShield, g_rcMenu, g_rcNewTab;
 static RECT g_rcBookmarksBar;
+
+// Declaraciones adelantadas
+static void LaunchUrl(HWND hwnd, const wchar_t *url);
+static void NavigateTab(int tabIdx, const wchar_t *title, const wchar_t *url);
+static void ShowGamesFolderPopup(HWND hwnd, RECT *anchorRect);
 
 // ----------------------------------------------------------------------------
 // Medición de Memoria RAM Real
@@ -200,6 +261,7 @@ static void InitIconCache() {
     }
     g_hBmpWaterfox = LoadCachedBmp(L"wf.bmp");
     g_hBmpFolder = LoadCachedBmp(L"folder.bmp");
+    g_hBmpGameFolder = LoadCachedBmp(L"game_folder.bmp");
 }
 
 static void FreeIconCache() {
@@ -216,6 +278,10 @@ static void FreeIconCache() {
     if (g_hBmpFolder) {
         DeleteObject(g_hBmpFolder);
         g_hBmpFolder = NULL;
+    }
+    if (g_hBmpGameFolder) {
+        DeleteObject(g_hBmpGameFolder);
+        g_hBmpGameFolder = NULL;
     }
 }
 
@@ -256,7 +322,6 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
         }
     }
 
-    // Fallback: Probar en el directorio actual de trabajo
     wchar_t curDir[MAX_PATH];
     GetCurrentDirectory(MAX_PATH, curDir);
     wchar_t curBin[MAX_PATH];
@@ -273,14 +338,23 @@ static BOOL FindWaterfoxBinary(wchar_t *outBin, DWORD maxBin, wchar_t *outProf, 
 }
 
 // ----------------------------------------------------------------------------
-// Detección de Juegos Web para Web Game Shield
+// Detección de Juegos Web para Web Game Shield y REA Booster
 // ----------------------------------------------------------------------------
 static BOOL IsGameUrl(const wchar_t *url) {
     if (!url) return FALSE;
-    if (wcsstr(url, L"fiveplay.lol") != NULL) return TRUE;
-    if (wcsstr(url, L"poki.com") != NULL) return TRUE;
-    if (wcsstr(url, L"crazygames.com") != NULL) return TRUE;
-    if (wcsstr(url, L"krunker.io") != NULL) return TRUE;
+    const wchar_t *gameDomains[] = {
+        L"fiveplay.lol", L"deloskiyt.pl", L"gta-vice-city", L"shar-wasm",
+        L"skate.aaddpp.lol", L"global-terror.net", L"pes6.optijuegos",
+        L"webwars.link", L"wasmarcade.com", L"vel.gg", L"moon-zombies",
+        L"kino-der-toten", L"cheese-cube", L"vibeslops", L"ovz-game",
+        L"mitchellhynes.com", L"hcemobile.com", L"q1.pieter.com",
+        L"q2.pieter.com", L"q3.pieter.com", L"rtcw.pieter.com",
+        L"ut.pieter.com", L"pixelsuft.github.io", L"webXash",
+        L"surfd.net", L"diablo_web", L"poki.com", L"crazygames.com", L"krunker.io"
+    };
+    for (size_t i = 0; i < sizeof(gameDomains) / sizeof(gameDomains[0]); i++) {
+        if (wcsstr(url, gameDomains[i]) != NULL) return TRUE;
+    }
     return FALSE;
 }
 
@@ -290,7 +364,6 @@ static BOOL IsGameUrl(const wchar_t *url) {
 static void LaunchUrl(HWND hwnd, const wchar_t *url) {
     if (!url || wcslen(url) == 0) return;
 
-    // Comprobar si el Web Game Shield está activo y bloquea el juego
     if (g_shieldBlocked && IsGameUrl(url)) {
         int resp = MessageBox(hwnd,
             L"🛡️ Web Game Shield Bloqueado\n\n"
@@ -513,17 +586,14 @@ static void RenderUI(HWND hwnd, HDC hdc) {
             DeleteObject(hAccent);
         }
 
-        // Mini icono Waterfox en la pestaña
         DrawIconBmp(memDC, g_hBmpWaterfox, g_tabs[i].rect.left + 8, g_tabs[i].rect.top + 8, 16, 16);
 
-        // Título de la pestaña
         SetBkMode(memDC, TRANSPARENT);
         SetTextColor(memDC, isActive ? COLOR_TEXT : COLOR_TEXT_MUTED);
         SelectObject(memDC, isActive ? g_hFontBold : g_hFontNormal);
         RECT rcTabText = { g_tabs[i].rect.left + 28, g_tabs[i].rect.top + 6, g_tabs[i].rect.right - 26, g_tabs[i].rect.bottom };
         DrawText(memDC, g_tabs[i].title, -1, &rcTabText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
-        // Botón 'x' de cerrar pestaña
         g_tabs[i].closeRect.left = g_tabs[i].rect.right - 22;
         g_tabs[i].closeRect.top = g_tabs[i].rect.top + 8;
         g_tabs[i].closeRect.right = g_tabs[i].rect.right - 6;
@@ -536,7 +606,6 @@ static void RenderUI(HWND hwnd, HDC hdc) {
         tabX += tabW + 4;
     }
 
-    // Botón '+' Nueva Pestaña
     g_rcNewTab.left = tabX + 4;
     g_rcNewTab.top = 8;
     g_rcNewTab.right = tabX + 32;
@@ -555,7 +624,6 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     FillRect(memDC, &toolbarRect, hToolBrush);
     DeleteObject(hToolBrush);
 
-    // Estados de Habilitación para Atrás y Adelante
     BrowserTab *activeTab = &g_tabs[g_activeTabIdx];
     BOOL canBack = (activeTab->historyIdx > 0);
     BOOL canFwd  = (activeTab->historyIdx + 1 < activeTab->historyCount);
@@ -635,7 +703,7 @@ static void RenderUI(HWND hwnd, HDC hdc) {
         for (int i = 0; i < (int)NUM_BOOKMARKS; i++) {
             SIZE size;
             GetTextExtentPoint32(memDC, g_bookmarks[i].title, wcslen(g_bookmarks[i].title), &size);
-            int itemW = size.cx + 16;
+            int itemW = size.cx + 20;
 
             g_bookmarks[i].rect.left = bmX;
             g_bookmarks[i].rect.top = currentY + 3;
@@ -647,7 +715,12 @@ static void RenderUI(HWND hwnd, HDC hdc) {
                 DrawDarkRect(memDC, &g_bookmarks[i].rect, COLOR_CARD_HOVER, COLOR_BORDER, 4);
             }
 
-            SetTextColor(memDC, isBmHover ? COLOR_TEXT : COLOR_TEXT_MUTED);
+            // Destacar Carpeta de Juegos con acento dorado
+            if (i == 1) {
+                SetTextColor(memDC, isBmHover ? COLOR_GOLD : RGB(220, 175, 55));
+            } else {
+                SetTextColor(memDC, isBmHover ? COLOR_TEXT : COLOR_TEXT_MUTED);
+            }
             DrawText(memDC, g_bookmarks[i].title, -1, &g_bookmarks[i].rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
             bmX += itemW + 8;
@@ -659,9 +732,8 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     // ------------------------------------------------------------------------
     // 4. Panel Central de la Nueva Pestaña (Home Stage)
     // ------------------------------------------------------------------------
-    int centerY = currentY + 24;
+    int centerY = currentY + 20;
 
-    // Logotipo e Identidad Waterfox Lite
     if (g_hBmpWaterfox) {
         DrawIconBmp(memDC, g_hBmpWaterfox, (width - 48) / 2, centerY, 48, 48);
         centerY += 52;
@@ -669,31 +741,34 @@ static void RenderUI(HWND hwnd, HDC hdc) {
 
     SelectObject(memDC, g_hFontTitle);
     SetTextColor(memDC, COLOR_TEXT);
-    RECT titleRect = { 0, centerY, width, centerY + 34 };
+    RECT titleRect = { 0, centerY, width, centerY + 32 };
     DrawText(memDC, L"Waterfox Lite (Native C Theme)", -1, &titleRect, DT_SINGLELINE | DT_CENTER);
 
     SelectObject(memDC, g_hFontSmall);
     SetTextColor(memDC, COLOR_ACCENT);
-    RECT badgeRect = { 0, centerY + 36, width, centerY + 58 };
-    DrawText(memDC, L"⚡ Motor Ultra-Lite nativo en C | Iconos en Caché | Intel Pentium G620 & HD Graphics", -1, &badgeRect, DT_SINGLELINE | DT_CENTER);
+    RECT badgeRect = { 0, centerY + 34, width, centerY + 54 };
+    DrawText(memDC, L"⚡ Motor Ultra-Lite nativo en C | Colección WASM/WebGL | Intel Pentium G620 & HD Graphics", -1, &badgeRect, DT_SINGLELINE | DT_CENTER);
 
     // ------------------------------------------------------------------------
-    // 5. Cuadrícula Responsiva de Apps REA (6 Tarjetas con Iconos en Caché)
+    // 5. Cuadrícula Responsiva de Accesos Directos (7 Tarjetas con Iconos en Caché)
     // ------------------------------------------------------------------------
-    int gridStartY = centerY + 72;
-    int cols = (width >= 1020) ? 6 : 3;
-    int cardWidth = (cols == 6) ? 148 : 220;
-    int cardHeight = (cols == 6) ? 115 : 100;
-    int cardGapX = 16;
-    int cardGapY = 14;
-    int totalGridWidth = (cols * cardWidth) + ((cols - 1) * cardGapX);
-    int gridStartX = (width - totalGridWidth) / 2;
-    if (gridStartX < 16) gridStartX = 16;
+    int gridStartY = centerY + 64;
+    int cols = (width >= 1060) ? 7 : 4;
+    int cardWidth = (cols == 7) ? 134 : 180;
+    int cardHeight = (cols == 7) ? 115 : 100;
+    int cardGapX = 12;
+    int cardGapY = 12;
 
     for (int i = 0; i < (int)NUM_APPS; i++) {
         int r = i / cols;
         int c = i % cols;
-        int x = gridStartX + c * (cardWidth + cardGapX);
+
+        int itemsInThisRow = (r == 0) ? (cols == 7 ? 7 : 4) : (NUM_APPS - 4);
+        int totalRowWidth = (itemsInThisRow * cardWidth) + ((itemsInThisRow - 1) * cardGapX);
+        int rowStartX = (width - totalRowWidth) / 2;
+        if (rowStartX < 12) rowStartX = 12;
+
+        int x = rowStartX + c * (cardWidth + cardGapX);
         int y = gridStartY + r * (cardHeight + cardGapY);
 
         g_apps[i].rect.left = x;
@@ -706,8 +781,8 @@ static void RenderUI(HWND hwnd, HDC hdc) {
         COLORREF border = isHovered ? COLOR_ACCENT : COLOR_BORDER;
         DrawDarkRect(memDC, &g_apps[i].rect, bg, border, 12);
 
-        // Badge de tecla numérica [1..6]
-        RECT keyBadge = { g_apps[i].rect.right - 24, g_apps[i].rect.top + 6, g_apps[i].rect.right - 6, g_apps[i].rect.top + 22 };
+        // Badge de tecla numérica [1..7]
+        RECT keyBadge = { g_apps[i].rect.right - 22, g_apps[i].rect.top + 6, g_apps[i].rect.right - 6, g_apps[i].rect.top + 22 };
         DrawDarkRect(memDC, &keyBadge, RGB(35, 42, 52), COLOR_BORDER, 4);
         SelectObject(memDC, g_hFontSmall);
         SetTextColor(memDC, COLOR_TEXT_MUTED);
@@ -723,8 +798,8 @@ static void RenderUI(HWND hwnd, HDC hdc) {
             DrawDarkRect(memDC, &fallbackBox, g_apps[i].fallbackColor, COLOR_BORDER, 8);
         }
 
-        // Nombre de la App
-        RECT nameRect = { x + 6, y + 50, x + cardWidth - 6, y + 70 };
+        // Nombre de la App / Juego
+        RECT nameRect = { x + 4, y + 50, x + cardWidth - 4, y + 70 };
         SetTextColor(memDC, COLOR_TEXT);
         SelectObject(memDC, g_hFontBold);
         DrawText(memDC, g_apps[i].name, -1, &nameRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
@@ -749,10 +824,9 @@ static void RenderUI(HWND hwnd, HDC hdc) {
     SetTextColor(memDC, COLOR_GREEN);
 
     wchar_t ramText[256];
-    swprintf(ramText, 256, L"🟢 Memoria RAM en Home: %.2f MB  |  CPU: 0.0%%  |  Tema Lite Puro en C  |  Atajos: Teclas 1-6 abren apps", ramMB);
+    swprintf(ramText, 256, L"🟢 RAM en Home: %.2f MB  |  CPU: 0.0%%  |  24 Juegos Web en Carpeta  |  Atajos: Teclas 1-7 abren apps y juegos", ramMB);
     DrawText(memDC, ramText, -1, &footerRect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
 
-    // BitBlt final a la pantalla
     BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
 
     SelectObject(memDC, oldBmp);
@@ -765,7 +839,7 @@ static void RenderUI(HWND hwnd, HDC hdc) {
 // ----------------------------------------------------------------------------
 static void ShowBookmarksPopup(HWND hwnd, RECT *anchorRect) {
     HMENU hMenu = CreatePopupMenu();
-    for (int i = 1; i < (int)NUM_BOOKMARKS; i++) {
+    for (int i = 2; i < (int)NUM_BOOKMARKS; i++) {
         AppendMenu(hMenu, MF_STRING, 3000 + i, g_bookmarks[i].title);
     }
     POINT pt = { anchorRect->left, anchorRect->bottom };
@@ -773,12 +847,80 @@ static void ShowBookmarksPopup(HWND hwnd, RECT *anchorRect) {
     int cmd = TrackPopupMenu(hMenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, NULL);
     DestroyMenu(hMenu);
 
-    if (cmd >= 3001 && cmd < 3000 + (int)NUM_BOOKMARKS) {
+    if (cmd >= 3002 && cmd < 3000 + (int)NUM_BOOKMARKS) {
         int idx = cmd - 3000;
         NavigateTab(g_activeTabIdx, g_bookmarks[idx].title, g_bookmarks[idx].url);
         SetWindowText(g_hEditUrl, g_bookmarks[idx].url);
         LaunchUrl(hwnd, g_bookmarks[idx].url);
         InvalidateRect(hwnd, NULL, FALSE);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Popup de Menú de la Carpeta de Juegos Web (24 Juegos Optimizados sin Duplicados)
+// ----------------------------------------------------------------------------
+static void ShowGamesFolderPopup(HWND hwnd, RECT *anchorRect) {
+    HMENU hMenu = CreatePopupMenu();
+
+    // 1. Submenú Mundo Abierto y Otros (10 títulos)
+    HMENU hSubOpenWorld = CreatePopupMenu();
+    for (int i = 0; i < (int)NUM_GAMES_OPENWORLD; i++) {
+        AppendMenu(hSubOpenWorld, MF_STRING, ID_GAME_START + i, g_gamesMundoAbierto[i].title);
+    }
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hSubOpenWorld, L"🌍 Mundo Abierto & Otros (10)");
+
+    // 2. Submenú Zombies (4 títulos)
+    HMENU hSubZombies = CreatePopupMenu();
+    for (int i = 0; i < (int)NUM_GAMES_ZOMBIES; i++) {
+        AppendMenu(hSubZombies, MF_STRING, ID_GAME_START + 100 + i, g_gamesZombies[i].title);
+    }
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hSubZombies, L"🧟 Modo Zombies (CoD) (4)");
+
+    // 3. Submenú Shooters y Clásicos (13 títulos)
+    HMENU hSubShooters = CreatePopupMenu();
+    for (int i = 0; i < (int)NUM_GAMES_SHOOTERS; i++) {
+        AppendMenu(hSubShooters, MF_STRING, ID_GAME_START + 200 + i, g_gamesShooters[i].title);
+    }
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hSubShooters, L"🎯 Shooters & Clásicos (13)");
+
+    AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hMenu, MF_STRING, 4999, L"⚡ Perfil REA Game Booster: 30 FPS / 2 Cores Activo");
+
+    POINT pt = { anchorRect->left, anchorRect->bottom };
+    ClientToScreen(hwnd, &pt);
+
+    int cmd = TrackPopupMenu(hMenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, NULL);
+    DestroyMenu(hMenu);
+
+    if (cmd >= ID_GAME_START && cmd < ID_GAME_START + (int)NUM_GAMES_OPENWORLD) {
+        int idx = cmd - ID_GAME_START;
+        NavigateTab(g_activeTabIdx, g_gamesMundoAbierto[idx].title, g_gamesMundoAbierto[idx].url);
+        SetWindowText(g_hEditUrl, g_gamesMundoAbierto[idx].url);
+        LaunchUrl(hwnd, g_gamesMundoAbierto[idx].url);
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+    else if (cmd >= ID_GAME_START + 100 && cmd < ID_GAME_START + 100 + (int)NUM_GAMES_ZOMBIES) {
+        int idx = cmd - (ID_GAME_START + 100);
+        NavigateTab(g_activeTabIdx, g_gamesZombies[idx].title, g_gamesZombies[idx].url);
+        SetWindowText(g_hEditUrl, g_gamesZombies[idx].url);
+        LaunchUrl(hwnd, g_gamesZombies[idx].url);
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+    else if (cmd >= ID_GAME_START + 200 && cmd < ID_GAME_START + 200 + (int)NUM_GAMES_SHOOTERS) {
+        int idx = cmd - (ID_GAME_START + 200);
+        NavigateTab(g_activeTabIdx, g_gamesShooters[idx].title, g_gamesShooters[idx].url);
+        SetWindowText(g_hEditUrl, g_gamesShooters[idx].url);
+        LaunchUrl(hwnd, g_gamesShooters[idx].url);
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+    else if (cmd == 4999) {
+        MessageBox(hwnd,
+            L"⚡ Perfil REA Game Booster (Waterfox Lite)\n\n"
+            L"• Limitador nativo a 30 FPS para juegos 3D (evita 100% CPU lock en Pentium G620)\n"
+            L"• Clamping de hilos a 2 núcleos (hardwareConcurrency = 2)\n"
+            L"• Aceleración WebGL con antialias desactivado (ahorra 60% GPU)\n"
+            L"• Escalado nítido con interpolación pixelated para Intel HD Graphics",
+            L"REA Game Booster Activo", MB_OK | MB_ICONINFORMATION);
     }
 }
 
@@ -855,7 +997,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             hwnd, (HMENU)1001, GetModuleHandle(NULL), NULL
         );
         SendMessage(g_hEditUrl, WM_SETFONT, (WPARAM)g_hFontNormal, TRUE);
-        SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar en la web o presiona 1-6 para abrir apps...");
+        SendMessage(g_hEditUrl, EM_SETCUEBANNER, TRUE, (LPARAM)L"Buscar en la web o presiona 1-7 para abrir apps y juegos...");
 
         SetTimer(hwnd, 1, 1000, NULL);
         return 0;
@@ -1049,13 +1191,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
-        // 9. Clic en Apps REA
+        // 9. Clic en Apps REA / Juegos Web
         for (int i = 0; i < (int)NUM_APPS; i++) {
             if (PtInRect(&g_apps[i].rect, (POINT){ x, y })) {
-                NavigateTab(g_activeTabIdx, g_apps[i].name, g_apps[i].url);
-                SetWindowText(g_hEditUrl, g_apps[i].url);
-                LaunchUrl(hwnd, g_apps[i].url);
-                InvalidateRect(hwnd, NULL, FALSE);
+                if (wcscmp(g_apps[i].url, L"action:games_folder") == 0) {
+                    ShowGamesFolderPopup(hwnd, &g_apps[i].rect);
+                } else {
+                    NavigateTab(g_activeTabIdx, g_apps[i].name, g_apps[i].url);
+                    SetWindowText(g_hEditUrl, g_apps[i].url);
+                    LaunchUrl(hwnd, g_apps[i].url);
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
                 return 0;
             }
         }
@@ -1064,8 +1210,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (g_showBookmarksBar) {
             for (int i = 0; i < (int)NUM_BOOKMARKS; i++) {
                 if (PtInRect(&g_bookmarks[i].rect, (POINT){ x, y })) {
-                    if (i == 0) {
+                    if (wcscmp(g_bookmarks[i].url, L"action:bookmarks") == 0) {
                         ShowBookmarksPopup(hwnd, &g_bookmarks[i].rect);
+                    } else if (wcscmp(g_bookmarks[i].url, L"action:games_folder") == 0) {
+                        ShowGamesFolderPopup(hwnd, &g_bookmarks[i].rect);
                     } else if (wcslen(g_bookmarks[i].url) > 0) {
                         NavigateTab(g_activeTabIdx, g_bookmarks[i].title, g_bookmarks[i].url);
                         SetWindowText(g_hEditUrl, g_bookmarks[i].url);
@@ -1137,7 +1285,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 L"• Diseñado para Intel Pentium G620 & HD Graphics\n"
                 L"• Consumo de memoria en Home: ~2.5 - 3.7 MB RAM\n"
                 L"• Motor gráfico GDI 60 FPS con Icon Cache en Disco\n"
-                L"• Barra de marcadores, pestañas múltiples y escudo Web Game Shield",
+                L"• Barra de marcadores, pestañas múltiples y escudo Web Game Shield\n"
+                L"• Colección de 24 Juegos Web WASM/WebGL con Booster a 30 FPS",
                 L"Acerca de Waterfox Lite", MB_OK | MB_ICONINFORMATION);
             break;
 
@@ -1149,13 +1298,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_KEYDOWN: {
-        if (wParam >= '1' && wParam <= '6') {
+        if (wParam >= '1' && wParam <= '7') {
             int idx = wParam - '1';
             if (idx >= 0 && idx < (int)NUM_APPS) {
-                NavigateTab(g_activeTabIdx, g_apps[idx].name, g_apps[idx].url);
-                SetWindowText(g_hEditUrl, g_apps[idx].url);
-                LaunchUrl(hwnd, g_apps[idx].url);
-                InvalidateRect(hwnd, NULL, FALSE);
+                if (wcscmp(g_apps[idx].url, L"action:games_folder") == 0) {
+                    ShowGamesFolderPopup(hwnd, &g_apps[idx].rect);
+                } else {
+                    NavigateTab(g_activeTabIdx, g_apps[idx].name, g_apps[idx].url);
+                    SetWindowText(g_hEditUrl, g_apps[idx].url);
+                    LaunchUrl(hwnd, g_apps[idx].url);
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
             }
         }
         return 0;
@@ -1247,7 +1400,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
-        // Intercepción global de atajos de teclado (funciona incluso con foco en la barra de URL)
         if (msg.message == WM_KEYDOWN) {
             BOOL isCtrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             BOOL isShift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;

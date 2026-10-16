@@ -153,11 +153,29 @@
     };
   } catch(e) {}
 
-  // D) Limitador inteligente de cuadros (Frame Limiter a 60 FPS)
-  // Evita que juegos sencillos en bucle abierto intenten correr a 200+ FPS y sobrecalienten la PC
+  // D) Limitador inteligente de cuadros con perfil REA (30 FPS para 3D pesados / 60 FPS para clásicos)
+  const HEAVY_3D_GAMES = [
+    'fiveplay.lol',
+    'deloskiyt.pl',
+    'joncodeofficial.github.io',
+    'shar-wasm.cjoseph.workers.dev',
+    'skate.aaddpp.lol',
+    'global-terror.net',
+    'vibeslops.luckeysystems.com',
+    'ovz-game-production.up.railway.app',
+    'mitchellhynes.com',
+    'vel.gg',
+    'moon-zombies.pages.dev',
+    'kino-der-toten.pages.dev',
+    'cheese-cube.pages.dev'
+  ];
+
+  const isHeavy3D = HEAVY_3D_GAMES.some(domain => currentHost.includes(domain));
+  const targetFps = isHeavy3D ? 30 : 60; // 30 FPS para juegos pesados evita el 100% de saturación en Pentium G620
+  const frameInterval = 1000 / targetFps;
+
   const origRAF = window.requestAnimationFrame;
   let lastFrameTime = 0;
-  const frameInterval = 1000 / 60; // Máximo 60 FPS estables
 
   window.requestAnimationFrame = function (callback) {
     return origRAF(function (timestamp) {
@@ -171,5 +189,12 @@
     });
   };
 
-  console.log('[Waterfox Lite Booster] Game Booster activado (MSAA Off, Input Lag Reducido, 60 FPS Cap).');
+  // E) Inyectar aceleración CSS para renderizado nítido de Canvas
+  try {
+    const style = document.createElement('style');
+    style.textContent = 'canvas { image-rendering: -moz-crisp-edges !important; image-rendering: pixelated !important; }';
+    (document.head || document.documentElement).appendChild(style);
+  } catch(e) {}
+
+  console.log(`[Waterfox Lite Booster] Game Booster activado (MSAA Off, Input Lag Reducido, Cap a ${targetFps} FPS para Pentium G620).`);
 })();

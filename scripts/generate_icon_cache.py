@@ -181,5 +181,68 @@ def create_icons():
         folder_pixels.append(row)
     write_bmp("folder.bmp", 16, 16, folder_pixels)
 
+    # 9. gamepad.bmp (Control de juego retro para acceso directo y tarjetas)
+    pad_pixels = []
+    for y in range(H):
+        row = []
+        for x in range(W):
+            dist = ((x - cx)**2 + (y - cy)**2)**0.5
+            if dist <= r_circ:
+                # Silueta de mando de consola
+                is_left_grip = (4 <= x <= 10) and (6 <= y <= 20)
+                is_right_grip = (21 <= x <= 27) and (6 <= y <= 20)
+                is_center = (9 <= x <= 22) and (10 <= y <= 22)
+                is_bumpers = (7 <= x <= 24) and (21 <= y <= 24)
+
+                if is_left_grip or is_right_grip or is_center or is_bumpers:
+                    # D-pad en la izquierda
+                    is_dpad_h = (6 <= x <= 12) and (13 <= y <= 15)
+                    is_dpad_v = (8 <= x <= 10) and (11 <= y <= 17)
+                    if is_dpad_h or is_dpad_v:
+                        row.append((240, 246, 252)) # Cruz blanca
+                    # Botones de acción en la derecha (A, B, X, Y)
+                    elif (x == 23 and y == 17):
+                        row.append((235, 180, 50)) # Amarillo
+                    elif (x == 23 and y == 11):
+                        row.append((63, 185, 80))  # Verde
+                    elif (x == 20 and y == 14):
+                        row.append((88, 166, 255)) # Azul
+                    elif (x == 26 and y == 14):
+                        row.append((248, 81, 73))  # Rojo
+                    elif (13 <= x <= 14 and y == 16) or (17 <= x <= 18 and y == 16):
+                        row.append((139, 148, 158)) # Select / Start
+                    else:
+                        row.append((45, 52, 64)) # Cuerpo del gamepad
+                else:
+                    row.append((13, 17, 23)) # Fondo
+            else:
+                row.append((13, 17, 23))
+        pad_pixels.append(row)
+    write_bmp("gamepad.bmp", W, H, pad_pixels)
+
+    # 10. game_folder.bmp (Icono de carpeta con control de juego para marcadores)
+    gfolder_pixels = []
+    for y in range(16):
+        row = []
+        for x in range(16):
+            is_folder = (1 <= x <= 14 and 2 <= y <= 12) or (1 <= x <= 6 and 12 <= y <= 14)
+            if is_folder:
+                # Contorno dorado de carpeta con mando morado en el interior
+                is_inner_pad = (4 <= x <= 11) and (4 <= y <= 9)
+                if is_inner_pad:
+                    if (x == 5 and y == 7) or (x == 6 and y == 7) or (x == 5 and y == 6):
+                        row.append((255, 255, 255)) # Mini cruz
+                    elif (x == 9 and y == 7) or (x == 10 and y == 6):
+                        row.append((248, 81, 73))   # Mini botón
+                    else:
+                        row.append((155, 81, 224))  # Mando morado
+                else:
+                    row.append((235, 180, 50))      # Oro
+            else:
+                row.append((22, 27, 34))
+        gfolder_pixels.append(row)
+    write_bmp("game_folder.bmp", 16, 16, gfolder_pixels)
+
 if __name__ == '__main__':
     create_icons()
+
